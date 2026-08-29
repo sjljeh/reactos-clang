@@ -53,13 +53,6 @@ errno_t __cdecl _wsopen_nolock(
 } // extern "C"
 #endif // __GNUC__
 
-#ifdef __clang__
-// Hack for broken Clang, which crashes, when using __cdecl on a static template function.
-// See CORE-19902
-#undef __cdecl
-#define __cdecl
-#endif // __clang__
-
 
 //-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //

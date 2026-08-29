@@ -87,7 +87,7 @@ static __forceinline size_t __cdecl common_strnlen_c(
         Element const* const string,
         size_t         const maximum_count
         ) throw()
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(_UCRT_BUILD_SSE2) && !defined(_UCRT_BUILD_AVX2)
+#if defined(__GNUC__) && !defined(__clang__) && !defined(_UCRT_BUILD_SSE2) && !defined(_UCRT_BUILD_AVX2)
         ;
 #else
     {
