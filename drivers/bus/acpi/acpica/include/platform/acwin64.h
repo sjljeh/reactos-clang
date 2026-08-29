@@ -136,8 +136,8 @@
 \
     if ((FacsPtr) != 0) \
     { \
-        UINT32 compare, prev, newval; \
-        UINT32* lock = &((FacsPtr)->GlobalLock); \
+        long compare, prev, newval; \
+        volatile long *lock = ACPI_CAST_PTR (volatile long, &((FacsPtr)->GlobalLock)); \
         do \
         { \
             compare = *lock; \
@@ -155,7 +155,7 @@
 \
     if ((FacsPtr) != 0) \
     { \
-        pending = InterlockedAnd(&(FacsPtr)->GlobalLock, ~3) & 1; \
+        pending = InterlockedAnd(ACPI_CAST_PTR (volatile long, &((FacsPtr)->GlobalLock)), ~3) & 1; \
     } \
     (Pnd) = pending; \
 }
