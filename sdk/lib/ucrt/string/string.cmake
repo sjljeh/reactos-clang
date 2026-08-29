@@ -57,8 +57,8 @@ list(APPEND UCRT_STRING_SOURCES
     string/wmemmove_s.cpp
 )
 
-# Special handling for GCC and Clang
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+# Special handling for GCC
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     list(APPEND UCRT_STRING_SOURCES
         string/strnlen-avx2.cpp
         string/strnlen-sse2.cpp
