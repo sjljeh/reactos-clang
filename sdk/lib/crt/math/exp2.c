@@ -7,7 +7,5 @@ __cdecl
 exp2(
     _In_ double x)
 {
-    /* This below avoids clang to optimize our pow call to exp2 */
-    static const double TWO = 2.0;
-    return pow(TWO, x);
+    return pow(2.0, x);
 }
