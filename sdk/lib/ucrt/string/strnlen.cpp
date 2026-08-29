@@ -21,14 +21,14 @@
 
 
 
-//namespace // clang doesn't like this!
-//{
+namespace
+{
     enum strnlen_mode
     {
         bounded,  // strnlen mode; maximum_count is respected
         unbounded, // strlen mode; maximum_count is ignored
     };
-//}
+}
 
 // This function returns true if we have reached the end of the range to be
 // searched for a terminator.  For the bounded strnlen functions, we must
