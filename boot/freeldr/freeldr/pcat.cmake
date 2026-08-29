@@ -160,11 +160,7 @@ add_library(freeldr_common
 )
 target_compile_definitions(freeldr_common PRIVATE _FRLDRLIB_)
 
-if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    # We need to reduce the binary size
-    target_compile_options(freeldr_common PRIVATE "/Os")
-endif()
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     # Prevent using SSE (no support in freeldr)
     target_compile_options(freeldr_common PUBLIC -mno-sse)
 endif()
