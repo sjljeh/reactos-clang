@@ -34,7 +34,7 @@ extern "C" {
 #define DECLSPEC_INTRINTYPE
 #endif
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 
     typedef union DECLSPEC_INTRINTYPE _CRT_ALIGN(8) __m64
     {
@@ -194,7 +194,7 @@ __m64 _mm_set1_pi8(char b);
 #define _mm_cmpgt_pi32 _m_pcmpgtd
 
 /* Use intrinsics on MSVC */
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #pragma intrinsic(_m_empty)
 #pragma intrinsic(_m_from_int)
 #pragma intrinsic(_m_to_int)

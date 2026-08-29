@@ -14,7 +14,7 @@
 #include <vcruntime.h>
 #include <xmmintrin.h>
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 
 typedef union _DECLSPEC_INTRIN_TYPE _CRT_ALIGN(16) __m128i
 {
@@ -328,7 +328,7 @@ void _mm_pause(void);
 #define _mm_bsrli_si128 _mm_srli_si128
 #define _mm_stream_si64 _mm_stream_si64x
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 
 #pragma intrinsic(_mm_add_sd)
 #pragma intrinsic(_mm_add_pd)
