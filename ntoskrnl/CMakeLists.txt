@@ -23,12 +23,7 @@ endif()
 
 add_asm_files(ntoskrnl_asm ${NTOSKRNL_ASM_SOURCE})
 
-if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    # Clang optimises strcmp calls to memcmp.
-    target_link_libraries(libntoskrnl INTERFACE memcmp)
-endif()
-
-if((CMAKE_C_COMPILER_ID STREQUAL "Clang") OR (CMAKE_C_COMPILER_ID STREQUAL "GNU"))
+if((CMAKE_C_COMPILER_ID STREQUAL "GNU"))
     # Enable xsave feature
     add_compile_options(-mxsave)
 endif()
