@@ -1,10 +1,7 @@
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_options(/Ox /Ob2 /Ot /Oy)
-    # Avoid spam in clang-cl as it doesn't support /GT
-    if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
-        add_compile_options(/GT)
-    endif()
+    add_compile_options(/GT)
 elseif(OPTIMIZE STREQUAL "1")
     add_compile_options(/O1)
 elseif(OPTIMIZE STREQUAL "2")
@@ -35,10 +32,7 @@ add_definitions(/D__STDC__=1)
 # Enable correct values of __cplusplus macro for newer standards
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>)
 
-# Ignore any "standard" include paths, and do not use any default CRT library.
-if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
-    add_compile_options(/X /Zl)
-endif()
+add_compile_options(/X /Zl)
 
 # Erase warning C4819 for Far East Asian: The file contains characters that cannot be displayed in the current code page
 add_compile_options(/wd4819)
@@ -46,19 +40,14 @@ add_compile_options(/wd4819)
 # Disable buffer security checks by default.
 add_compile_options(/GS-)
 
-if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    if(ARCH STREQUAL "amd64")
-        add_compile_options(-mcx16) # Generate CMPXCHG16B
-    endif()
-    set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file: ")
-endif()
-
 # HACK: for VS 11+ we need to explicitly disable SSE, which is off by
 # default for older compilers. See CORE-6507
 if(ARCH STREQUAL "i386")
-    # Clang's IA32 means i386, which doesn't have cmpxchg8b
-    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-        add_compile_options(-march=${OARCH})
+    if(USE_CLANG_CL)
+        add_compile_options(
+            $<$<COMPILE_LANGUAGE:C,CXX>:/clang:-march=${OARCH}>
+            $<$<COMPILE_LANGUAGE:C,CXX>:/clang:-mno-sse>
+            $<$<COMPILE_LANGUAGE:C,CXX>:/clang:-mno-sse2>)
     else()
         add_compile_options(/arch:IA32)
     endif()
@@ -75,9 +64,7 @@ add_compile_options(/Zc:threadSafeInit-)
 # HACK: Disable use of __CxxFrameHandler4 on VS 16.3+ (x64 only)
 # See https://developercommunity.visualstudio.com/content/problem/746534/visual-c-163-runtime-uses-an-unsupported-api-for-u.html
 if(ARCH STREQUAL "amd64" AND MSVC_VERSION GREATER 1922)
-    if (NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
-        add_compile_options(/d2FH4-)
-    endif()
+    add_compile_options(/d2FH4-)
     add_link_options(/d2:-FH4-)
 endif()
 
@@ -109,8 +96,8 @@ if (MSVC_IDE)
     set(ALLOW_WARNINGS TRUE)
 endif()
 
-# On x86 Debug builds, if it's not Clang-CL or msbuild, treat all warnings as errors
-if ((ARCH STREQUAL "i386") AND (CMAKE_BUILD_TYPE STREQUAL "Debug") AND (CMAKE_C_COMPILER_ID STREQUAL "MSVC") AND (NOT MSVC_IDE))
+# On x86 Debug builds, if it's not msbuild, treat all warnings as errors
+if ((ARCH STREQUAL "i386") AND (CMAKE_BUILD_TYPE STREQUAL "Debug") AND (NOT MSVC_IDE))
     set(TREAT_ALL_WARNINGS_AS_ERRORS TRUE)
 endif()
 
@@ -182,9 +169,7 @@ add_compile_definitions($<$<CONFIG:Release>:NDEBUG=>)
 
 # Hotpatchable images
 if(ARCH STREQUAL "i386")
-    if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
-        add_compile_options(/hotpatch)
-    endif()
+    add_compile_options(/hotpatch)
     set(_hotpatch_link_flag "/FUNCTIONPADMIN:5")
 elseif(ARCH STREQUAL "amd64")
     set(_hotpatch_link_flag "/FUNCTIONPADMIN:6")
@@ -471,11 +456,7 @@ function(CreateBootSectorTarget _target_name _asm_file _binary_file _base_addres
     get_defines(_defines)
     get_includes(_includes)
 
-    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-        set(_no_std_includes_flag "-nostdinc")
-    else()
-        set(_no_std_includes_flag "/X")
-    endif()
+    set(_no_std_includes_flag "/X")
 
     add_custom_command(
         OUTPUT ${_temp_file}
@@ -559,11 +540,7 @@ function(add_linker_script _target _linker_script_file)
 
     # Create the additional linker response file.
     set(_generated_file "${_generated_file_path_prefix}.rsp")
-    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-        set(_no_std_includes_flag "-nostdinc")
-    else()
-        set(_no_std_includes_flag "/X")
-    endif()
+    set(_no_std_includes_flag "/X")
     if(MSVC_IDE)
         # MSBuild, via the VS IDE, uses response files when calling CL or LINK.
         # We cannot specify a custom response file on the linker command-line,
