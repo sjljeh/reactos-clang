@@ -36,7 +36,7 @@
 extern "C" {
 #endif
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 
 typedef union _DECLSPEC_INTRIN_TYPE _CRT_ALIGN(16) __m128
 {
@@ -401,7 +401,7 @@ do {                                              \
     _mm_setcsr((_mm_getcsr() & ~_MM_FLUSH_ZERO_MASK) | (__mode))
 
 /* Use intrinsics on MSVC */
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #pragma intrinsic(_mm_prefetch)
 #pragma intrinsic(_mm_setzero_ps)
 #pragma intrinsic(_mm_add_ss)

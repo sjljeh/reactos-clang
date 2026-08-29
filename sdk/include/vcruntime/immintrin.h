@@ -12,7 +12,7 @@
 //#include <wmmintrin.h>
 #include <emmintrin.h>
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 
 typedef union _DECLSPEC_INTRIN_TYPE  _CRT_ALIGN(32) __m256i
 {
@@ -81,7 +81,7 @@ unsigned __int64 __cdecl _xgetbv(unsigned int);
 void __cdecl _xsetbv(unsigned int, unsigned __int64);
 
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 
 #pragma intrinsic(_mm256_cmpeq_epi8)
 #pragma intrinsic(_mm256_cmpeq_epi16)

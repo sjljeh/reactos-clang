@@ -297,10 +297,7 @@ void __fastfail(unsigned int Code);
 #pragma intrinsic(__readcr0)
 #pragma intrinsic(__readcr2)
 #pragma intrinsic(__readcr3)
-//#pragma intrinsic(__readcr4)
-// HACK: MSVC is broken
-unsigned long __cdecl  ___readcr4(void);
-#define __readcr4 ___readcr4
+#pragma intrinsic(__readcr4)
 #pragma intrinsic(__readcr8)
 #pragma intrinsic(__readdr)
 #pragma intrinsic(__writedr)
