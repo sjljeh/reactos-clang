@@ -56,6 +56,21 @@ if(USE_CLANG_CL)
         set(MSVC_CXX_ARCHITECTURE_ID "X86")
     endif()
 
+    # (TBD upstream readiness)
+    # llvm-rc delegates preprocessing to Clang, which necessitates a target.
+    # Microsoft's resource compiler has no notion of a target because of
+    # how it works, but my choice at this stage is to provide an option for
+    # the target. Without this snippet, it works perfectly fine, until you
+    # try to compile for i386 on a LLVM toolchain compiled whose default
+    # target is x64 (_WIN64 leakage, for example.)
+    if(DEFINED CMAKE_RC_COMPILER)
+        get_filename_component(_rc_compiler_name "${CMAKE_RC_COMPILER}" NAME_WE)
+        if(_rc_compiler_name STREQUAL "llvm-rc")
+            string(APPEND CMAKE_RC_FLAGS " --target=${CMAKE_C_COMPILER_TARGET}")
+        endif()
+        unset(_rc_compiler_name)
+    endif()
+
     # Avoid wrapping RC compiler with cmcldeps utility for clang-cl.
     # Otherwise it breaks cross-compilation (32bit ReactOS cannot be compiled by 64bit LLVM),
     # target architecture is not passed properly
