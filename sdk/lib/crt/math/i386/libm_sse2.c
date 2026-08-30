@@ -8,7 +8,7 @@
 #include <emmintrin.h>
 #include <math.h>
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #pragma function(acos,asin,atan,atan2,cos)
 #pragma function(exp,log,log10,pow,sin,tan)
 #define __ATTRIBUTE_SSE2__
