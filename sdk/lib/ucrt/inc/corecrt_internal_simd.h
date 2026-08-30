@@ -18,14 +18,7 @@
 
 #if defined _CRT_SIMD_SUPPORT_AVAILABLE
 
-#if defined(__clang__)
-#define _UCRT_ENABLE_SSE2 \
-    _Pragma("clang attribute push(__attribute__((target(\"sse2\"))), apply_to=function)")
-#define _UCRT_ENABLE_AVX2 \
-    _Pragma("clang attribute push(__attribute__((target(\"sse2,avx,avx2\"))), apply_to=function)")
-#define _UCRT_RESTORE_DEFAULT_ISA \
-    _Pragma("clang attribute pop")
-#elif defined(__GNUC__)
+#ifdef __GNUC__
 #define _UCRT_ENABLE_SSE2 \
     _Pragma("GCC push_options") \
     _Pragma("GCC target(\"sse2\")")
