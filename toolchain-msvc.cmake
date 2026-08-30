@@ -72,7 +72,7 @@ if(NOT DEFINED CMAKE_MC_COMPILER)
     set(CMAKE_MC_COMPILER mc)
 endif()
 if(NOT DEFINED CMAKE_RC_COMPILER)
-    set(CMAKE_RC_COMPILER llvm-rc)
+    set(CMAKE_RC_COMPILER rc)
 endif()
 
 if(ARCH STREQUAL "amd64")
