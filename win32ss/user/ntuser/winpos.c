@@ -2056,6 +2056,17 @@ co_WinPosSetWindowPos(
               {
                   RgnType = IntGdiCombineRgn(RgnUpdate, RgnUpdate, VisAfter, RGN_AND);
                   REGION_UnlockRgn(RgnUpdate);
+                  if (RgnType == NULLREGION)
+                  {
+                      IntGdiSetRegionOwner(Window->hrgnUpdate, GDI_OBJ_HMGR_POWNED);
+                      GreDeleteObject(Window->hrgnUpdate);
+                      Window->hrgnUpdate = NULL;
+                      Window->state &= ~(WNDS_UPDATEDIRTY |
+                                         WNDS_SENDERASEBACKGROUND |
+                                         WNDS_ERASEBACKGROUND);
+                      if (!(Window->state & WNDS_INTERNALPAINT))
+                          MsqDecPaintCountQueue(Window->head.pti);
+                  }
               }
           }
           REGION_bOffsetRgn(VisAfter, -Window->rcWindow.left, -Window->rcWindow.top);
