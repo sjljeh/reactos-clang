@@ -91,15 +91,19 @@ IntFlushScreen(
         RtlCopyMemory(pjDest,
                       pjSrc,
                       (SIZE_T)(rcl.bottom - rcl.top) * ppdev->ScreenDelta);
-        return;
+    }
+    else
+    {
+        for (y = rcl.top; y < rcl.bottom; ++y)
+        {
+            RtlCopyMemory(pjDest, pjSrc, cjScan);
+            pjSrc += ppdev->psoShadow->lDelta;
+            pjDest += ppdev->ScreenDelta;
+        }
     }
 
-    for (y = rcl.top; y < rcl.bottom; ++y)
-    {
-        RtlCopyMemory(pjDest, pjSrc, cjScan);
-        pjSrc += ppdev->psoShadow->lDelta;
-        pjDest += ppdev->ScreenDelta;
-    }
+    /* Complete write-combined stores before reporting the present done. */
+    MemoryBarrier();
 }
 
 static
