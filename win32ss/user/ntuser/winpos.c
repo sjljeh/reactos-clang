@@ -1541,6 +1541,11 @@ WinPosInternalMoveWindow(PWND Window, INT MoveX, INT MoveY)
    Window->rcClient.top += MoveY;
    Window->rcClient.bottom += MoveY;
 
+   if (Window->hrgnUpdate != NULL && Window->hrgnUpdate != HRGN_WINDOW)
+   {
+      NtGdiOffsetRgn(Window->hrgnUpdate, MoveX, MoveY);
+   }
+
    for(Child = Window->spwndChild; Child; Child = Child->spwndNext)
    {
       WinPosInternalMoveWindow(Child, MoveX, MoveY);
@@ -1813,6 +1818,7 @@ co_WinPosSetWindowPos(
    HDC Dc;
    RECTL CopyRect;
    PWND Ancestor;
+   PWND Child;
    BOOL bPointerInWindow, PosChanged = FALSE;
    PTHREADINFO pti = PsGetCurrentThreadWin32Thread();
 
@@ -1949,9 +1955,12 @@ co_WinPosSetWindowPos(
        NewClientRect.top  != OldClientRect.top)
    {
       // Move child window if their parent is moved. Keep Child window relative to Parent...
-      WinPosInternalMoveWindow(Window,
-                               NewClientRect.left - OldClientRect.left,
-                               NewClientRect.top - OldClientRect.top);
+      for (Child = Window->spwndChild; Child; Child = Child->spwndNext)
+      {
+         WinPosInternalMoveWindow(Child,
+                                  NewClientRect.left - OldClientRect.left,
+                                  NewClientRect.top - OldClientRect.top);
+      }
       PosChanged = TRUE;
    }
 
