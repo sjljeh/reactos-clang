@@ -23,7 +23,7 @@
 /*
  * DrvEnableSurface
  *
- * Create engine bitmap around frame buffer and set the video mode requested
+ * Create the primary and shadow surfaces and set the video mode requested
  * when PDEV was initialized.
  *
  * Status
@@ -35,7 +35,9 @@ DrvEnableSurface(
    IN DHPDEV dhpdev)
 {
    PPDEV ppdev = (PPDEV)dhpdev;
-   HSURF hSurface;
+   HSURF hSurface = NULL;
+   HSURF hShadow = NULL;
+   SURFOBJ *psoShadow = NULL;
    ULONG BitmapType;
    SIZEL ScreenSize;
    VIDEO_MEMORY VideoMemory;
@@ -88,7 +90,7 @@ DrvEnableSurface(
          break;
 
       default:
-         return NULL;
+         goto Failure;
    }
 
    ppdev->iDitherFormat = BitmapType;
@@ -96,27 +98,85 @@ DrvEnableSurface(
    ScreenSize.cx = ppdev->ScreenWidth;
    ScreenSize.cy = ppdev->ScreenHeight;
 
-   hSurface = (HSURF)EngCreateBitmap(ScreenSize, ppdev->ScreenDelta, BitmapType,
+   /*
+    * Keep the authoritative primary surface in cached system memory. This
+    * avoids reads from the framebuffer for screen-to-screen operations. The
+    * hooked drawing functions copy modified rectangles to the framebuffer.
+    */
+   hShadow = (HSURF)EngCreateBitmap(ScreenSize,
+                                    0,
+                                    BitmapType,
+                                    BMF_TOPDOWN,
+                                    NULL);
+   if ((hShadow != NULL) &&
+       EngAssociateSurface(hShadow, ppdev->hDevEng, 0))
+   {
+      psoShadow = EngLockSurface(hShadow);
+   }
+
+   if (psoShadow != NULL)
+   {
+      hSurface = EngCreateDeviceSurface((DHSURF)ppdev,
+                                        ScreenSize,
+                                        BitmapType);
+   }
+
+   if ((hSurface != NULL) &&
+       EngAssociateSurface(hSurface,
+                           ppdev->hDevEng,
+                           HOOK_BITBLT |
+                           HOOK_COPYBITS |
+                           HOOK_STRETCHBLTROP |
+                           HOOK_TRANSPARENTBLT |
+                           HOOK_ALPHABLEND |
+                           HOOK_GRADIENTFILL |
+                           HOOK_LINETO))
+   {
+      ppdev->hSurfEng = hSurface;
+      ppdev->hSurfShadow = hShadow;
+      ppdev->psoShadow = psoShadow;
+
+      /* EngCreateBitmap zeroes the shadow; make VRAM agree with it. */
+      IntFlushScreen(ppdev, NULL);
+      return hSurface;
+   }
+
+   /* If the shadow cannot be allocated, retain the old direct-VRAM path. */
+   if (hSurface != NULL)
+      EngDeleteSurface(hSurface);
+   if (psoShadow != NULL)
+      EngUnlockSurface(psoShadow);
+   if (hShadow != NULL)
+      EngDeleteSurface(hShadow);
+
+   hSurface = (HSURF)EngCreateBitmap(ScreenSize,
+                                     ppdev->ScreenDelta,
+                                     BitmapType,
                                      (ppdev->ScreenDelta > 0) ? BMF_TOPDOWN : 0,
                                      ppdev->ScreenPtr);
    if (hSurface == NULL)
-   {
-      return NULL;
-   }
-
-   /*
-    * Associate the surface with our device.
-    */
+      goto Failure;
 
    if (!EngAssociateSurface(hSurface, ppdev->hDevEng, 0))
    {
       EngDeleteSurface(hSurface);
-      return NULL;
+      goto Failure;
    }
 
    ppdev->hSurfEng = hSurface;
-
    return hSurface;
+
+Failure:
+   VideoMemory.RequestedVirtualAddress = ppdev->ScreenPtr;
+   EngDeviceIoControl(ppdev->hDriver,
+                      IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
+                      &VideoMemory,
+                      sizeof(VIDEO_MEMORY),
+                      NULL,
+                      0,
+                      &ulTemp);
+   ppdev->ScreenPtr = NULL;
+   return NULL;
 }
 
 /*
@@ -137,8 +197,23 @@ DrvDisableSurface(
    VIDEO_MEMORY VideoMemory;
    PPDEV ppdev = (PPDEV)dhpdev;
 
-   EngDeleteSurface(ppdev->hSurfEng);
-   ppdev->hSurfEng = NULL;
+   if (ppdev->hSurfEng != NULL)
+   {
+      EngDeleteSurface(ppdev->hSurfEng);
+      ppdev->hSurfEng = NULL;
+   }
+
+   if (ppdev->psoShadow != NULL)
+   {
+      EngUnlockSurface(ppdev->psoShadow);
+      ppdev->psoShadow = NULL;
+   }
+
+   if (ppdev->hSurfShadow != NULL)
+   {
+      EngDeleteSurface(ppdev->hSurfShadow);
+      ppdev->hSurfShadow = NULL;
+   }
 
 #ifdef EXPERIMENTAL_MOUSE_CURSOR_SUPPORT
    /* Clear all mouse pointer surfaces. */
@@ -152,6 +227,7 @@ DrvDisableSurface(
    VideoMemory.RequestedVirtualAddress = ((PPDEV)dhpdev)->ScreenPtr;
    EngDeviceIoControl(((PPDEV)dhpdev)->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                       &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
+   ppdev->ScreenPtr = NULL;
 }
 
 /*
@@ -188,6 +264,9 @@ DrvAssertMode(
       {
 	     IntSetPalette(dhpdev, ppdev->PaletteEntries, 0, 256);
       }
+
+      /* A mode set invalidates VRAM, but the shadow remains authoritative. */
+      IntFlushScreen(ppdev, NULL);
 
       return TRUE;
    }
