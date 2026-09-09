@@ -35,6 +35,7 @@ EngCopyBits(
     POINTL ptlSrc = *SourcePoint;
     LONG      lTmp;
     BOOL      bTopToBottom;
+    ULONG     Direction;
 
     DPRINT("Entering EngCopyBits with SourcePoint (%d,%d) and DestRect (%d,%d)-(%d,%d).\n",
            SourcePoint->x, SourcePoint->y, DestRect->left, DestRect->top, DestRect->right, DestRect->bottom);
@@ -174,7 +175,25 @@ EngCopyBits(
 
         case DC_COMPLEX:
             DPRINT("DC_COMPLEX.\n");
-            CLIPOBJ_cEnumStart(Clip, FALSE, CT_RECTANGLES, CD_ANY, 0);
+            if (psoDest == psoSource)
+            {
+                if (DestRect->top < SourcePoint->y)
+                {
+                    Direction = (DestRect->left < SourcePoint->x) ?
+                                CD_RIGHTDOWN : CD_LEFTDOWN;
+                }
+                else
+                {
+                    Direction = (DestRect->left < SourcePoint->x) ?
+                                CD_RIGHTUP : CD_LEFTUP;
+                }
+            }
+            else
+            {
+                Direction = CD_ANY;
+            }
+
+            CLIPOBJ_cEnumStart(Clip, FALSE, CT_RECTANGLES, Direction, 0);
 
             do
             {
