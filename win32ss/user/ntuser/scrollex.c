@@ -385,12 +385,12 @@ IntScrollWindowEx(
          rcChild = Child->rcWindow;
          RECTL_vOffsetRect(&rcChild, -ClientOrigin.x, -ClientOrigin.y);
 
-         /* Adjust window positions */
-         RECTL_vOffsetRect(&Child->rcWindow, dx, dy);
-         RECTL_vOffsetRect(&Child->rcClient, dx, dy);
-
          if (!prcScroll || RECTL_bIntersectRect(&rcDummy, &rcChild, &rcScroll))
          {
+            /* Adjust the positions of children affected by the scroll. */
+            RECTL_vOffsetRect(&Child->rcWindow, dx, dy);
+            RECTL_vOffsetRect(&Child->rcClient, dx, dy);
+
             UserRefObjectCo(Child, &WndRef);
 
             if (UserIsDesktopWindow(Window->spwndParent))
