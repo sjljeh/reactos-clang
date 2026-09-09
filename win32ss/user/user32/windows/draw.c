@@ -1607,24 +1607,45 @@ FillRect(HDC hDC, CONST RECT *lprc, HBRUSH hbr)
  * @implemented
  */
 BOOL WINAPI
-DrawFocusRect(HDC hdc, CONST RECT *rect)
+DrawFocusRect(
+    _In_ HDC hdc,
+    _In_ const RECT *rect)
 {
     HGDIOBJ OldObj;
     UINT cx, cy;
+    INT width, height;
+    UINT leftWidth, rightWidth;
+    UINT topHeight, bottomHeight;
 
     NtUserSystemParametersInfo(SPI_GETFOCUSBORDERWIDTH, 0, &cx, 0);
     NtUserSystemParametersInfo(SPI_GETFOCUSBORDERHEIGHT, 0, &cy, 0);
 
+    width = rect->right - rect->left;
+    height = rect->bottom - rect->top;
+    if (width <= 0 || height <= 0)
+        return TRUE;
+
+    leftWidth = min(cx, (UINT)width);
+    rightWidth = min(cx, (UINT)width - leftWidth);
+    topHeight = min(cy, (UINT)height);
+    bottomHeight = min(cy, (UINT)height - topHeight);
+
     OldObj = SelectObject(hdc, gpsi->hbrGray);
 
     /* top */
-    PatBlt(hdc, rect->left, rect->top, rect->right - rect->left, cy, PATINVERT);
+    if (topHeight)
+        PatBlt(hdc, rect->left, rect->top, width, topHeight, PATINVERT);
     /* bottom */
-    PatBlt(hdc, rect->left, rect->bottom - cy, rect->right - rect->left, cy, PATINVERT);
+    if (bottomHeight)
+        PatBlt(hdc, rect->left, rect->bottom - bottomHeight, width, bottomHeight, PATINVERT);
     /* left */
-    PatBlt(hdc, rect->left, rect->top + cy, cx, rect->bottom - rect->top - (2 * cy), PATINVERT);
+    if (leftWidth && height > (INT)(topHeight + bottomHeight))
+        PatBlt(hdc, rect->left, rect->top + topHeight, leftWidth,
+               height - topHeight - bottomHeight, PATINVERT);
     /* right */
-    PatBlt(hdc, rect->right - cx, rect->top + cy, cx, rect->bottom - rect->top - (2 * cy), PATINVERT);
+    if (rightWidth && height > (INT)(topHeight + bottomHeight))
+        PatBlt(hdc, rect->right - rightWidth, rect->top + topHeight, rightWidth,
+               height - topHeight - bottomHeight, PATINVERT);
 
     SelectObject(hdc, OldObj);
     return TRUE;
