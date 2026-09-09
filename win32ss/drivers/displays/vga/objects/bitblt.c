@@ -487,7 +487,7 @@ DrvBitBlt(
             if (Dest == Source)
             {
                 if (DestRect->top <= FinalSourcePoint.y)
-                    Direction = DestRect->left < FinalSourcePoint.y ? CD_RIGHTDOWN : CD_LEFTDOWN;
+                    Direction = DestRect->left < FinalSourcePoint.x ? CD_RIGHTDOWN : CD_LEFTDOWN;
                 else
                     Direction = DestRect->left < FinalSourcePoint.x ? CD_RIGHTUP : CD_LEFTUP;
             }
