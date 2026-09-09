@@ -678,12 +678,27 @@ IntEngLineTo(SURFOBJ *psoDest,
         return TRUE;
     }
 
-    b.left = min(x1, x2);
-    b.right = max(x1, x2);
-    b.top = min(y1, y2);
-    b.bottom = max(y1, y2);
-    if (b.left == b.right) b.right++;
-    if (b.top == b.bottom) b.bottom++;
+    if (x1 < x2)
+    {
+        b.left = x1;
+        b.right = x2;
+    }
+    else
+    {
+        b.left = x2;
+        b.right = x1 + 1;
+    }
+
+    if (y1 < y2)
+    {
+        b.top = y1;
+        b.bottom = y2;
+    }
+    else
+    {
+        b.top = y2;
+        b.bottom = y1 + 1;
+    }
 
     if (psurfDest->flags & HOOK_LINETO)
     {
