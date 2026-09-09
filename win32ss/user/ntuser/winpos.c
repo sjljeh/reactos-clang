@@ -2079,7 +2079,20 @@ co_WinPosSetWindowPos(
             RgnType = IntGdiCombineRgn(CopyRgn, VisAfter, VisBefore, RGN_AND);
          else if (VisBeforeJustClient != NULL)
          {
-            RgnType = IntGdiCombineRgn(CopyRgn, VisAfter, VisBeforeJustClient, RGN_AND);
+            PREGION NewClientRgn = IntSysCreateRectpRgnIndirect(&NewClientRect);
+
+            if (NewClientRgn != NULL)
+            {
+               REGION_bOffsetRgn(NewClientRgn,
+                                 -NewWindowRect.left,
+                                 -NewWindowRect.top);
+               IntGdiCombineRgn(NewClientRgn, NewClientRgn, VisAfter, RGN_AND);
+               RgnType = IntGdiCombineRgn(CopyRgn,
+                                          NewClientRgn,
+                                          VisBeforeJustClient,
+                                          RGN_AND);
+               REGION_Delete(NewClientRgn);
+            }
          }
 
          /* Now use in copying bits which are in the update region. */
