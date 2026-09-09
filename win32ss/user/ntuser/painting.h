@@ -32,7 +32,12 @@ BOOL FASTCALL IntFlashWindowEx(PWND,PFLASHWINFO);
 BOOL FASTCALL IntIntersectWithParents(PWND, RECTL *);
 BOOL FASTCALL IntIsWindowDrawable(PWND);
 BOOL UserDrawCaption(PWND,HDC,RECTL*,HFONT,HICON,const PUNICODE_STRING,UINT);
-VOID FASTCALL UpdateThreadWindows(PWND,PTHREADINFO,HRGN);
+VOID FASTCALL
+UpdateThreadWindows(
+    _In_ PWND pWnd,
+    _In_ PTHREADINFO pti,
+    _In_opt_ HRGN hRgn,
+    _In_ const RECTL *prcUpdate);
 VOID FASTCALL UserSyncAndPaintWindows(PWND pWnd, ULONG Flags);
 VOID FASTCALL IntPaintWindow(PWND);
 VOID FASTCALL IntSendNCPaint(PWND,HRGN);

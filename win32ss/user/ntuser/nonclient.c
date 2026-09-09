@@ -598,6 +598,7 @@ DefWndDoSizeMove(PWND pwnd, WORD wParam)
                  {  // Moving the whole window now!
                     HRGN hrgnNew;
                     HRGN hrgnOrig = GreCreateRectRgnIndirect(&pwnd->rcWindow);
+                    RECTL updateRect;
 
                     if (pwnd->hrgnClip != NULL)
                        NtGdiCombineRgn(hrgnOrig, hrgnOrig, pwnd->hrgnClip, RGN_AND);
@@ -630,8 +631,12 @@ DefWndDoSizeMove(PWND pwnd, WORD wParam)
                        }
                     }
 
-                    // Update all the windows after the move or size, including this window.
-                    UpdateThreadWindows(UserGetDesktopWindow()->spwndChild, pti, hrgnOrig);
+                    // Update overlapping windows after the move or size, including this window.
+                    updateRect = pwnd->rcWindow;
+                    UpdateThreadWindows(UserGetDesktopWindow()->spwndChild,
+                                        pti,
+                                        hrgnOrig,
+                                        &updateRect);
 
                     if (hrgnOrig) GreDeleteObject(hrgnOrig);
                     if (hrgnNew) GreDeleteObject(hrgnNew);

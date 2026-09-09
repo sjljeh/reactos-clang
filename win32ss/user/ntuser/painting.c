@@ -1099,14 +1099,23 @@ UpdateTheadChildren(PWND pWnd, HRGN hRgn)
 }
 
 VOID FASTCALL
-UpdateThreadWindows(PWND pWnd, PTHREADINFO pti, HRGN hRgn)
+UpdateThreadWindows(
+   _In_ PWND pWnd,
+   _In_ PTHREADINFO pti,
+   _In_opt_ HRGN hRgn,
+   _In_ const RECTL *prcUpdate)
 {
    PWND pwndTemp;
+   RECTL Intersection;
 
    for ( pwndTemp = pWnd;
          pwndTemp;
          pwndTemp = pwndTemp->spwndNext )
    {
+      if (!IntIsWindowDrawable(pwndTemp) ||
+          !RECTL_bIntersectRect(&Intersection, &pwndTemp->rcWindow, prcUpdate))
+         continue;
+
       if (pwndTemp->head.pti == pti)
       {
           UserUpdateWindows(pwndTemp, RDW_ALLCHILDREN);
