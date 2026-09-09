@@ -2174,7 +2174,9 @@ co_WinPosSetWindowPos(
                          0);
 
             UserReleaseDC(Window, Dc, FALSE);
+            REGION_bOffsetRgn(CopyRgn, NewWindowRect.left, NewWindowRect.top);
             IntValidateParent(Window, CopyRgn);
+            REGION_bOffsetRgn(CopyRgn, -NewWindowRect.left, -NewWindowRect.top);
             GreDeleteObject(DcRgn);
          }
       }
