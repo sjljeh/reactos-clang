@@ -5272,6 +5272,7 @@ static void LISTVIEW_Refresh(LISTVIEW_INFO *infoPtr, HDC hdc, const RECT *prcEra
     ITERATOR i;
     HDC hdcOrig = hdc;
     HBITMAP hbmp = NULL;
+    HBITMAP hbmpOld = NULL;
     RANGE range;
 
     LISTVIEW_DUMP(infoPtr);
@@ -5292,7 +5293,13 @@ static void LISTVIEW_Refresh(LISTVIEW_INFO *infoPtr, HDC hdc, const RECT *prcEra
             return;
         }
 
-        SelectObject(hdc, hbmp);
+        hbmpOld = SelectObject(hdc, hbmp);
+        if (!hbmpOld || hbmpOld == HGDI_ERROR) {
+            ERR("Failed to select bitmap into backbuffer DC\n");
+            DeleteObject(hbmp);
+            DeleteDC(hdc);
+            return;
+        }
         SelectObject(hdc, infoPtr->hFont);
 
         if(GetClipBox(hdcOrig, &rcClient))
@@ -5386,6 +5393,7 @@ enddraw:
                infoPtr->rcList.bottom - infoPtr->rcList.top,
                hdc, infoPtr->rcList.left, infoPtr->rcList.top, SRCCOPY);
 
+        SelectObject(hdc, hbmpOld);
         DeleteObject(hbmp);
         DeleteDC(hdc);
     } else {
