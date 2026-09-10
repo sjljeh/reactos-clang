@@ -188,11 +188,83 @@ DceDeleteClipRgn(DCE* Dce)
 }
 
 static PREGION FASTCALL
+DceCopyClipRgn(
+   _In_ DCE *Dce,
+   _In_ PPROCESSINFO ppiOwner)
+{
+   PREGION RgnClip;
+   PREGION RgnCopy;
+   KAPC_STATE ApcState;
+   BOOL bCopied = FALSE;
+
+   if (ppiOwner->peProcess == NULL ||
+       (ppiOwner->W32PF_flags & W32PF_TERMINATED))
+   {
+      return NULL;
+   }
+
+   RgnCopy = IntSysCreateRectpRgn(0, 0, 0, 0);
+   if (RgnCopy == NULL)
+      return NULL;
+
+   KeStackAttachProcess(&ppiOwner->peProcess->Pcb, &ApcState);
+   RgnClip = REGION_LockRgn(Dce->hrgnClip);
+   if (RgnClip != NULL)
+   {
+      bCopied = REGION_bCopy(RgnCopy, RgnClip);
+      REGION_UnlockRgn(RgnClip);
+   }
+   KeUnstackDetachProcess(&ApcState);
+
+   if (!bCopied)
+   {
+      REGION_Delete(RgnCopy);
+      RgnCopy = NULL;
+   }
+
+   return RgnCopy;
+}
+
+static VOID FASTCALL
+DceOffsetClipRgn(
+   _In_ DCE *Dce,
+   _In_opt_ PPROCESSINFO ppiOwner,
+   _In_ INT DeltaX,
+   _In_ INT DeltaY)
+{
+   PREGION RgnClip;
+   KAPC_STATE ApcState;
+   BOOLEAN bAttached = FALSE;
+
+   if (ppiOwner != NULL)
+   {
+      if (ppiOwner->peProcess == NULL ||
+          (ppiOwner->W32PF_flags & W32PF_TERMINATED))
+      {
+         return;
+      }
+
+      KeStackAttachProcess(&ppiOwner->peProcess->Pcb, &ApcState);
+      bAttached = TRUE;
+   }
+
+   RgnClip = REGION_LockRgn(Dce->hrgnClip);
+   if (RgnClip != NULL)
+   {
+      REGION_bOffsetRgn(RgnClip, DeltaX, DeltaY);
+      REGION_UnlockRgn(RgnClip);
+   }
+
+   if (bAttached)
+      KeUnstackDetachProcess(&ApcState);
+}
+
+static PREGION FASTCALL
 DceCalculateVisRgn(
    _In_ DCE *Dce,
    _In_opt_ PWND Window,
    _In_ ULONG Flags,
-   _In_ BOOLEAN AnyProcess)
+   _In_opt_ PPROCESSINFO ppiClipOwner)
 {
    PREGION RgnVisible = NULL;
    ULONG DcxFlags;
@@ -244,14 +316,17 @@ noparent:
 
       if (Dce->hrgnClip != NULL)
       {
-          RgnClip = AnyProcess ? REGION_LockRgnAnyProcess(Dce->hrgnClip) :
-                                 REGION_LockRgn(Dce->hrgnClip);
+          RgnClip = ppiClipOwner ? DceCopyClipRgn(Dce, ppiClipOwner) :
+                                   REGION_LockRgn(Dce->hrgnClip);
       }
 
       if (RgnClip)
       {
          IntGdiCombineRgn(RgnVisible, RgnVisible, RgnClip, RGN_AND);
-         REGION_UnlockRgn(RgnClip);
+         if (ppiClipOwner)
+            REGION_Delete(RgnClip);
+         else
+            REGION_UnlockRgn(RgnClip);
       }
       else
       {
@@ -266,12 +341,15 @@ noparent:
    {
        PREGION RgnClip;
 
-       RgnClip = AnyProcess ? REGION_LockRgnAnyProcess(Dce->hrgnClip) :
-                              REGION_LockRgn(Dce->hrgnClip);
+       RgnClip = ppiClipOwner ? DceCopyClipRgn(Dce, ppiClipOwner) :
+                                REGION_LockRgn(Dce->hrgnClip);
        if (RgnClip)
        {
           IntGdiCombineRgn(RgnVisible, RgnVisible, RgnClip, RGN_DIFF);
-          REGION_UnlockRgn(RgnClip);
+          if (ppiClipOwner)
+             REGION_Delete(RgnClip);
+          else
+             REGION_UnlockRgn(RgnClip);
        }
    }
 
@@ -284,7 +362,7 @@ DceUpdateVisRgn(DCE *Dce, PWND Window, ULONG Flags)
 {
    PREGION RgnVisible;
 
-   RgnVisible = DceCalculateVisRgn(Dce, Window, Flags, FALSE);
+   RgnVisible = DceCalculateVisRgn(Dce, Window, Flags, NULL);
 
    Dce->DCXFlags &= ~DCX_DCEDIRTY;
    GdiSelectVisRgn(Dce->hDC, RgnVisible);
@@ -842,6 +920,7 @@ DceResetActiveDCEs(PWND Window)
    DCE *pDCE;
    PDC dc;
    PREGION RgnVisible;
+   PPROCESSINFO ppiOwner;
    PWND CurrentWindow;
    INT DeltaX;
    INT DeltaY;
@@ -875,10 +954,23 @@ DceResetActiveDCEs(PWND Window)
             }
          }
 
+         ppiOwner = pDCE->ppiOwner;
+         if (ppiOwner == NULL && pDCE->ptiOwner != NULL)
+            ppiOwner = pDCE->ptiOwner->ppi;
+
+         if (ppiOwner == PsGetCurrentProcessWin32Process())
+            ppiOwner = NULL;
+         else if (ppiOwner != NULL &&
+                  (ppiOwner->peProcess == NULL ||
+                   (ppiOwner->W32PF_flags & W32PF_TERMINATED)))
+         {
+            continue;
+         }
+
          RgnVisible = DceCalculateVisRgn(pDCE,
                                          CurrentWindow,
                                          pDCE->DCXFlags,
-                                         TRUE);
+                                         ppiOwner);
 
          dc = DC_LockDcAnyProcess(pDCE->hDC);
          if (dc == NULL)
@@ -911,13 +1003,7 @@ DceResetActiveDCEs(PWND Window)
             }
             if (NULL != pDCE->hrgnClip)
             {
-               PREGION RgnClip = REGION_LockRgnAnyProcess(pDCE->hrgnClip);
-
-               if (RgnClip)
-               {
-                  REGION_bOffsetRgn(RgnClip, DeltaX, DeltaY);
-                  REGION_UnlockRgn(RgnClip);
-               }
+               DceOffsetClipRgn(pDCE, ppiOwner, DeltaX, DeltaY);
             }
          }
 

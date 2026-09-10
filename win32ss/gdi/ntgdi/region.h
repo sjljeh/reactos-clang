@@ -41,11 +41,6 @@ FASTCALL
 REGION_LockRgn(
     _In_ HRGN hrgn);
 
-PREGION
-FASTCALL
-REGION_LockRgnAnyProcess(
-    _In_ HRGN hrgn);
-
 VOID
 FASTCALL
 REGION_UnlockRgn(
