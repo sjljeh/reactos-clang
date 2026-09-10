@@ -521,7 +521,8 @@ BOOL ProcessHotKey(VOID)
       selectedWindow = 1;
 
       TRACE("[ATbot] HotKey Received. Opening window.\n");
-      ShowWindowAsync(switchdialog, SW_SHOWNORMAL);
+      ShowWindow(switchdialog, SW_SHOWNORMAL);
+      UpdateWindow(switchdialog);
       SwitchToThisWindow(switchdialog, TRUE);
       isOpen = TRUE;
    }
