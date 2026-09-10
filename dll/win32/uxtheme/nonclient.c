@@ -206,7 +206,7 @@ ThemeEndBufferedPaint(PDRAW_CONTEXT pcontext, int x, int y, int cx, int cy)
     HBITMAP hbmp;
     BitBlt(pcontext->hDCScreen, 0, 0, cx, cy, pcontext->hDC, x, y, SRCCOPY);
     hbmp = (HBITMAP) SelectObject(pcontext->hDC, pcontext->hbmpOld);
-    DeleteObject(pcontext->hDC);
+    DeleteDC(pcontext->hDC);
     DeleteObject(hbmp);
 
     pcontext->hDC = pcontext->hDCScreen;
