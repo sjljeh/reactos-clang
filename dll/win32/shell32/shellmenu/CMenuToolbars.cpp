@@ -381,7 +381,7 @@ HRESULT CMenuToolbarBase::CreateToolbar(HWND hwndParent, DWORD dwFlags)
     LONG tbStyles = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN |
         TBSTYLE_TOOLTIPS | TBSTYLE_TRANSPARENT | TBSTYLE_REGISTERDROP | TBSTYLE_LIST | TBSTYLE_FLAT | TBSTYLE_CUSTOMERASE |
         CCS_NODIVIDER | CCS_NOPARENTALIGN | CCS_NORESIZE | CCS_TOP;
-    LONG tbExStyles = TBSTYLE_EX_DOUBLEBUFFER | WS_EX_TOOLWINDOW;
+    LONG tbExStyles = WS_EX_TOOLWINDOW;
 
     if (dwFlags & SMINIT_VERTICAL)
     {
@@ -412,6 +412,7 @@ HRESULT CMenuToolbarBase::CreateToolbar(HWND hwndParent, DWORD dwFlags)
     HWND toolbar = CToolbar::Create(hwndParent, tbStyles, tbExStyles);
     m_hWnd = NULL;
     SubclassWindow(toolbar);
+    SendMessageW(TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DOUBLEBUFFER);
 
     SetWindowTheme(m_hWnd, L"", L"");
 
