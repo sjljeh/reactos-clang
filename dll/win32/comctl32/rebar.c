@@ -3816,7 +3816,9 @@ REBAR_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	    return REBAR_Destroy (infoPtr);
 
         case WM_ERASEBKGND:
-            if (infoPtr->bInBufferedPaint)
+            if (infoPtr->bInBufferedPaint ||
+                (WindowFromDC((HDC)wParam) == infoPtr->hwndSelf &&
+                 GetUpdateRect(infoPtr->hwndSelf, NULL, FALSE)))
             {
                 infoPtr->bBufferedErase = TRUE;
                 return TRUE;
