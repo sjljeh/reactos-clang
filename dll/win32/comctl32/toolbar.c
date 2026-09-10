@@ -31,7 +31,6 @@
  * TODO:
  *   - Styles:
  *     - TBSTYLE_REGISTERDROP
- *     - TBSTYLE_EX_DOUBLEBUFFER
  *   - Messages:
  *     - TB_GETOBJECT
  *     - TB_INSERTMARKHITTEST
@@ -160,6 +159,7 @@ typedef struct
     BOOL     bDragOutSent;    /* has TBN_DRAGOUT notification been sent for this drag? */
     BOOL     bUnicode;        /* Notifications are ASCII (FALSE) or Unicode (TRUE)? */
     BOOL     bCaptured;       /* mouse captured? */
+    BOOL     bBufferedErase;  /* background erase deferred to buffered paint */
     DWORD      dwStyle;       /* regular toolbar style */
     DWORD      dwExStyle;     /* extended toolbar style */
     DWORD      dwDTFlags;     /* DrawText flags */
@@ -5631,7 +5631,7 @@ TOOLBAR_Destroy (TOOLBAR_INFO *infoPtr)
 
 
 static LRESULT
-TOOLBAR_EraseBackground (TOOLBAR_INFO *infoPtr, WPARAM wParam, LPARAM lParam)
+TOOLBAR_DrawBackground (TOOLBAR_INFO *infoPtr, WPARAM wParam, LPARAM lParam)
 {
     NMTBCUSTOMDRAW tbcd;
     INT ret = FALSE;
@@ -5700,6 +5700,20 @@ TOOLBAR_EraseBackground (TOOLBAR_INFO *infoPtr, WPARAM wParam, LPARAM lParam)
 	    }
     }
     return ret;
+}
+
+
+static LRESULT
+TOOLBAR_EraseBackground (TOOLBAR_INFO *infoPtr, WPARAM wParam, LPARAM lParam)
+{
+    /* Defer erasing until the toolbar can present the completed backbuffer. */
+    if (infoPtr->dwExStyle & TBSTYLE_EX_DOUBLEBUFFER)
+    {
+        infoPtr->bBufferedErase = TRUE;
+        return TRUE;
+    }
+
+    return TOOLBAR_DrawBackground(infoPtr, wParam, lParam);
 }
 
 
@@ -6685,17 +6699,77 @@ TOOLBAR_NotifyFormat(const TOOLBAR_INFO *infoPtr, WPARAM wParam, LPARAM lParam)
 static LRESULT
 TOOLBAR_Paint (TOOLBAR_INFO *infoPtr, WPARAM wParam)
 {
-    HDC hdc;
+    HBITMAP hbmBuffer = NULL, hbmOld = NULL;
+    HDC hdc, hdcBuffer = NULL;
     PAINTSTRUCT ps;
+    RECT rcClient;
+    BOOL bBuffered = FALSE, bErase;
 
     /* fill ps.rcPaint with a default rect */
     ps.rcPaint = infoPtr->rcBound;
+    ps.fErase = FALSE;
 
     hdc = wParam==0 ? BeginPaint(infoPtr->hwndSelf, &ps) : (HDC)wParam;
+    bErase = ps.fErase || infoPtr->bBufferedErase;
+    infoPtr->bBufferedErase = FALSE;
 
     TRACE("psrect=(%s)\n", wine_dbgstr_rect(&ps.rcPaint));
 
-    TOOLBAR_Refresh (infoPtr, hdc, &ps);
+    if ((infoPtr->dwExStyle & TBSTYLE_EX_DOUBLEBUFFER) &&
+        GetClientRect(infoPtr->hwndSelf, &rcClient) &&
+        !IsRectEmpty(&rcClient))
+    {
+        hdcBuffer = CreateCompatibleDC(hdc);
+        hbmBuffer = CreateCompatibleBitmap(hdc, rcClient.right, rcClient.bottom);
+        if (hdcBuffer && hbmBuffer &&
+            (hbmOld = SelectObject(hdcBuffer, hbmBuffer)) &&
+            hbmOld != HGDI_ERROR)
+        {
+            IntersectClipRect(hdcBuffer,
+                              ps.rcPaint.left,
+                              ps.rcPaint.top,
+                              ps.rcPaint.right,
+                              ps.rcPaint.bottom);
+
+            BitBlt(hdcBuffer,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   ps.rcPaint.right - ps.rcPaint.left,
+                   ps.rcPaint.bottom - ps.rcPaint.top,
+                   hdc,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   SRCCOPY);
+            if (bErase)
+                TOOLBAR_DrawBackground(infoPtr, (WPARAM)hdcBuffer, 0);
+
+            TOOLBAR_Refresh(infoPtr, hdcBuffer, &ps);
+            BitBlt(hdc,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   ps.rcPaint.right - ps.rcPaint.left,
+                   ps.rcPaint.bottom - ps.rcPaint.top,
+                   hdcBuffer,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   SRCCOPY);
+            bBuffered = TRUE;
+        }
+    }
+
+    if (!bBuffered)
+    {
+        if (bErase)
+            TOOLBAR_DrawBackground(infoPtr, (WPARAM)hdc, 0);
+        TOOLBAR_Refresh(infoPtr, hdc, &ps);
+    }
+
+    if (hbmOld)
+        SelectObject(hdcBuffer, hbmOld);
+    if (hbmBuffer)
+        DeleteObject(hbmBuffer);
+    if (hdcBuffer)
+        DeleteDC(hdcBuffer);
     if (!wParam) EndPaint (infoPtr->hwndSelf, &ps);
 
     return 0;
