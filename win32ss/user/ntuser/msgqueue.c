@@ -1948,7 +1948,6 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
    PUSER_MESSAGE CurrentMessage;
    PLIST_ENTRY ListHead;
    MSG msg;
-   ULONG_PTR idSave;
    DWORD QS_Flags;
    LONG_PTR ExtraInfo;
    MSG clk_msg;
@@ -1978,7 +1977,7 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
       CurrentMessage = CONTAINING_RECORD(ListHead, USER_MESSAGE, ListEntry);
       ListHead = ListHead->Flink;
 
-      if (MessageQueue->idSysPeek == (ULONG_PTR)CurrentMessage)
+      if (CurrentMessage->bInPlay)
       {
          TRACE("Skip this message due to it is in play!\n");
          continue;
@@ -1995,8 +1994,7 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
             ( is_mouse_message(CurrentMessage->Msg.message) ) ) && // Null window for anything mouse.
             ( CurrentMessage->QS_Flags & QSflags ) )
       {
-         idSave = MessageQueue->idSysPeek;
-         MessageQueue->idSysPeek = (ULONG_PTR)CurrentMessage;
+         CurrentMessage->bInPlay = TRUE;
 
          msg = CurrentMessage->Msg;
          ExtraInfo = CurrentMessage->ExtraInfo;
@@ -2014,21 +2012,17 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
              if (msg.message < MsgFilterLow || msg.message > MsgFilterHigh)
              {
                  MessageQueue->msgDblClk = clk_msg;
-                 MessageQueue->idSysPeek = idSave;
+                 CurrentMessage->bInPlay = FALSE;
                  continue;
              }
          }
 
+         CurrentMessage->bInPlay = FALSE;
          if (Remove)
          {
-             if (CurrentMessage->pti != NULL && (MessageQueue->idSysPeek == (ULONG_PTR)CurrentMessage))
-             {
-                MsqDestroyMessage(CurrentMessage);
-             }
+             MsqDestroyMessage(CurrentMessage);
              ClearMsgBitsMask(pti, QS_Flags);
          }
-
-         MessageQueue->idSysPeek = idSave;
 
          if (NotForUs)
          {

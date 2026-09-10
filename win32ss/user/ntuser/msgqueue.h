@@ -13,6 +13,7 @@ typedef struct _USER_MESSAGE
   LONG_PTR ExtraInfo;
   DWORD dwQEvent;
   PTHREADINFO pti;
+  BOOL bInPlay;
 } USER_MESSAGE, *PUSER_MESSAGE;
 
 struct _USER_MESSAGE_QUEUE;
@@ -51,7 +52,6 @@ typedef struct _USER_MESSAGE_QUEUE
 
   PTHREADINFO ptiSysLock;
   ULONG_PTR   idSysLock;
-  ULONG_PTR   idSysPeek;
   PTHREADINFO ptiMouse;
   PTHREADINFO ptiKeyboard;
 
