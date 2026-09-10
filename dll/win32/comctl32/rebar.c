@@ -171,6 +171,7 @@ typedef struct
     SIZE     calcSize;    /* calculated rebar size - coordinates swapped for CCS_VERT */
     BOOL     bUnicode;    /* TRUE if parent wants notify in W format */
     BOOL     DoRedraw;    /* TRUE to actually draw bands */
+    BOOL     bBufferedErase; /* background erase deferred to buffered paint */
     UINT     fStatus;     /* Status flags (see below)  */
     HCURSOR  hcurArrow;   /* handle to the arrow cursor */
     HCURSOR  hcurHorz;    /* handle to the EW cursor */
@@ -3447,7 +3448,7 @@ REBAR_NotifyFormat (REBAR_INFO *infoPtr, LPARAM cmd)
 
 
 static LRESULT
-REBAR_Paint (const REBAR_INFO *infoPtr, HDC hdc)
+REBAR_Paint (REBAR_INFO *infoPtr, HDC hdc)
 {
     if (hdc) {
         TRACE("painting\n");
@@ -3456,14 +3457,70 @@ REBAR_Paint (const REBAR_INFO *infoPtr, HDC hdc)
 #endif
         REBAR_Refresh (infoPtr, hdc);
     } else {
+        HBITMAP hbmBuffer = NULL, hbmOld = NULL;
+        HDC hdcBuffer = NULL;
         PAINTSTRUCT ps;
+        RECT rcClient;
+        BOOL bBuffered = FALSE, bErase;
+
         hdc = BeginPaint (infoPtr->hwndSelf, &ps);
+        bErase = ps.fErase || infoPtr->bBufferedErase;
+        infoPtr->bBufferedErase = FALSE;
         TRACE("painting (%s)\n", wine_dbgstr_rect(&ps.rcPaint));
-        if (ps.fErase) {
-            /* Erase area of paint if requested */
-            REBAR_EraseBkGnd (infoPtr, hdc);
+
+        if (GetClientRect(infoPtr->hwndSelf, &rcClient) &&
+            !IsRectEmpty(&rcClient))
+        {
+            hdcBuffer = CreateCompatibleDC(hdc);
+            hbmBuffer = CreateCompatibleBitmap(hdc, rcClient.right, rcClient.bottom);
+            if (hdcBuffer && hbmBuffer &&
+                (hbmOld = SelectObject(hdcBuffer, hbmBuffer)) &&
+                hbmOld != HGDI_ERROR)
+            {
+                IntersectClipRect(hdcBuffer,
+                                  ps.rcPaint.left,
+                                  ps.rcPaint.top,
+                                  ps.rcPaint.right,
+                                  ps.rcPaint.bottom);
+                BitBlt(hdcBuffer,
+                       ps.rcPaint.left,
+                       ps.rcPaint.top,
+                       ps.rcPaint.right - ps.rcPaint.left,
+                       ps.rcPaint.bottom - ps.rcPaint.top,
+                       hdc,
+                       ps.rcPaint.left,
+                       ps.rcPaint.top,
+                       SRCCOPY);
+                if (bErase)
+                    REBAR_EraseBkGnd(infoPtr, hdcBuffer);
+
+                REBAR_Refresh(infoPtr, hdcBuffer);
+                BitBlt(hdc,
+                       ps.rcPaint.left,
+                       ps.rcPaint.top,
+                       ps.rcPaint.right - ps.rcPaint.left,
+                       ps.rcPaint.bottom - ps.rcPaint.top,
+                       hdcBuffer,
+                       ps.rcPaint.left,
+                       ps.rcPaint.top,
+                       SRCCOPY);
+                bBuffered = TRUE;
+            }
         }
-        REBAR_Refresh (infoPtr, hdc);
+
+        if (!bBuffered)
+        {
+            if (bErase)
+                REBAR_EraseBkGnd(infoPtr, hdc);
+            REBAR_Refresh(infoPtr, hdc);
+        }
+
+        if (hbmOld && hbmOld != HGDI_ERROR)
+            SelectObject(hdcBuffer, hbmOld);
+        if (hbmBuffer)
+            DeleteObject(hbmBuffer);
+        if (hdcBuffer)
+            DeleteDC(hdcBuffer);
 	EndPaint (infoPtr->hwndSelf, &ps);
     }
 
@@ -3756,7 +3813,8 @@ REBAR_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	    return REBAR_Destroy (infoPtr);
 
         case WM_ERASEBKGND:
-	    return REBAR_EraseBkGnd (infoPtr, (HDC)wParam);
+            infoPtr->bBufferedErase = TRUE;
+            return TRUE;
 
 	case WM_GETFONT:
 	    return REBAR_GetFont (infoPtr);
