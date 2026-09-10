@@ -17,6 +17,21 @@ DBG_DEFAULT_CHANNEL(UserDce);
 static LIST_ENTRY LEDce;
 static INT DCECount = 0; // Count of DCE in system.
 
+typedef struct _DCE_LAYOUT_LOCK_ENTRY
+{
+   DCE *Dce;
+   PDC Dc;
+   HDC hDC;
+   PWND CurrentWindow;
+   BOOLEAN Reset;
+} DCE_LAYOUT_LOCK_ENTRY, *PDCE_LAYOUT_LOCK_ENTRY;
+
+struct _DCE_LAYOUT_LOCK
+{
+   ULONG Count;
+   DCE_LAYOUT_LOCK_ENTRY Entries[ANYSIZE_ARRAY];
+};
+
 #define DCX_CACHECOMPAREMASK (DCX_CLIPSIBLINGS | DCX_CLIPCHILDREN | \
                               DCX_NORESETATTRS | DCX_LOCKWINDOWUPDATE | \
                               DCX_LAYEREDWIN | DCX_CACHE | DCX_WINDOW | \
@@ -836,15 +851,194 @@ DceEmptyCache(VOID)
    }
 }
 
+static BOOLEAN FASTCALL
+DceResetLockedDCE(
+   _In_ PWND Window,
+   _Inout_ DCE *pDCE,
+   _Inout_ PDC dc,
+   _Outptr_result_maybenull_ PWND *pCurrentWindow)
+{
+   PREGION RgnVisible;
+   PWND CurrentWindow;
+   INT DeltaX;
+   INT DeltaY;
+
+   if (UserHMGetHandle(Window) == pDCE->hwndCurrent)
+   {
+      CurrentWindow = Window;
+   }
+   else
+   {
+      if (!pDCE->hwndCurrent)
+         CurrentWindow = NULL;
+      else
+         CurrentWindow = UserGetWindowObject(pDCE->hwndCurrent);
+      if (CurrentWindow == NULL)
+         return FALSE;
+   }
+
+   if (Window == CurrentWindow || IntIsChildWindow(Window, CurrentWindow))
+   {
+      if (pDCE->DCXFlags & DCX_WINDOW)
+      {
+         DeltaX = CurrentWindow->rcWindow.left - dc->ptlDCOrig.x;
+         DeltaY = CurrentWindow->rcWindow.top - dc->ptlDCOrig.y;
+         dc->ptlDCOrig.x = CurrentWindow->rcWindow.left;
+         dc->ptlDCOrig.y = CurrentWindow->rcWindow.top;
+      }
+      else
+      {
+         DeltaX = CurrentWindow->rcClient.left - dc->ptlDCOrig.x;
+         DeltaY = CurrentWindow->rcClient.top - dc->ptlDCOrig.y;
+         dc->ptlDCOrig.x = CurrentWindow->rcClient.left;
+         dc->ptlDCOrig.y = CurrentWindow->rcClient.top;
+      }
+
+      if (dc->dclevel.prgnClip != NULL)
+      {
+         REGION_bOffsetRgn(dc->dclevel.prgnClip, DeltaX, DeltaY);
+         dc->fs |= DC_DIRTY_RAO;
+      }
+      if (pDCE->hrgnClip != NULL)
+      {
+         PREGION RgnClip = REGION_LockRgnAnyProcess(pDCE->hrgnClip);
+
+         if (RgnClip)
+         {
+            REGION_bOffsetRgn(RgnClip, DeltaX, DeltaY);
+            REGION_UnlockRgn(RgnClip);
+         }
+      }
+   }
+
+   RgnVisible = DceCalculateVisRgn(pDCE,
+                                   CurrentWindow,
+                                   pDCE->DCXFlags,
+                                   TRUE);
+   pDCE->DCXFlags &= ~DCX_DCEDIRTY;
+   IntGdiSelectVisRgn(dc, RgnVisible);
+   if (RgnVisible != NULL)
+      REGION_Delete(RgnVisible);
+
+   *pCurrentWindow = CurrentWindow;
+   return TRUE;
+}
+
+_Ret_maybenull_
+PDCE_LAYOUT_LOCK FASTCALL
+DceBeginLayoutLock(VOID)
+{
+   PDCE_LAYOUT_LOCK Lock;
+   DCE_LAYOUT_LOCK_ENTRY TempEntry;
+   PLIST_ENTRY ListEntry;
+   SIZE_T Size;
+   ULONG ActiveCount = 0;
+   ULONG i, j;
+
+   for (ListEntry = LEDce.Flink;
+        ListEntry != &LEDce;
+        ListEntry = ListEntry->Flink)
+   {
+      DCE *Dce = CONTAINING_RECORD(ListEntry, DCE, List);
+
+      if (!(Dce->DCXFlags & (DCX_DCEEMPTY | DCX_INDESTROY)))
+         ++ActiveCount;
+   }
+
+   Size = FIELD_OFFSET(DCE_LAYOUT_LOCK, Entries) +
+          (SIZE_T)ActiveCount * sizeof(Lock->Entries[0]);
+   Lock = ExAllocatePoolWithTag(PagedPool, Size, USERTAG_DCE);
+   if (!Lock)
+      return NULL;
+
+   Lock->Count = 0;
+   for (ListEntry = LEDce.Flink;
+        ListEntry != &LEDce;
+        ListEntry = ListEntry->Flink)
+   {
+      DCE *Dce = CONTAINING_RECORD(ListEntry, DCE, List);
+
+      if (Dce->DCXFlags & (DCX_DCEEMPTY | DCX_INDESTROY))
+         continue;
+
+      Lock->Entries[Lock->Count].Dce = Dce;
+      Lock->Entries[Lock->Count].hDC = Dce->hDC;
+      Lock->Entries[Lock->Count].Dc = NULL;
+      Lock->Entries[Lock->Count].CurrentWindow = NULL;
+      Lock->Entries[Lock->Count].Reset = FALSE;
+      ++Lock->Count;
+   }
+
+   /* Match GDIOBJ_bLockMultipleObjects so GDI blits cannot deadlock us. */
+   for (i = 0; i < Lock->Count; ++i)
+   {
+      for (j = i + 1; j < Lock->Count; ++j)
+      {
+         if ((ULONG_PTR)Lock->Entries[i].hDC <
+             (ULONG_PTR)Lock->Entries[j].hDC)
+         {
+            TempEntry = Lock->Entries[i];
+            Lock->Entries[i] = Lock->Entries[j];
+            Lock->Entries[j] = TempEntry;
+         }
+      }
+   }
+
+   for (i = 0; i < Lock->Count; ++i)
+   {
+      Lock->Entries[i].Dc = DC_LockDcAnyProcess(Lock->Entries[i].hDC);
+      if (!Lock->Entries[i].Dc)
+      {
+         while (i > 0)
+         {
+            --i;
+            DC_UnlockDc(Lock->Entries[i].Dc);
+         }
+         ExFreePoolWithTag(Lock, USERTAG_DCE);
+         return NULL;
+      }
+   }
+
+   return Lock;
+}
+
+VOID FASTCALL
+DceEndLayoutLock(
+   _In_ PWND Window,
+   _In_ PDCE_LAYOUT_LOCK Lock)
+{
+   ULONG i;
+
+   for (i = 0; i < Lock->Count; ++i)
+   {
+      PDCE_LAYOUT_LOCK_ENTRY Entry = &Lock->Entries[i];
+
+      Entry->Reset = DceResetLockedDCE(Window,
+                                       Entry->Dce,
+                                       Entry->Dc,
+                                       &Entry->CurrentWindow);
+   }
+
+   for (i = Lock->Count; i > 0; --i)
+      DC_UnlockDc(Lock->Entries[i - 1].Dc);
+
+   for (i = 0; i < Lock->Count; ++i)
+   {
+      PDCE_LAYOUT_LOCK_ENTRY Entry = &Lock->Entries[i];
+
+      if (Entry->Reset && Entry->CurrentWindow)
+         IntEngWindowChanged(Entry->CurrentWindow, WOC_RGN_CLIENT);
+   }
+
+   ExFreePoolWithTag(Lock, USERTAG_DCE);
+}
+
 VOID FASTCALL
 DceResetActiveDCEs(PWND Window)
 {
    DCE *pDCE;
    PDC dc;
-   PREGION RgnVisible;
    PWND CurrentWindow;
-   INT DeltaX;
-   INT DeltaY;
    PLIST_ENTRY ListEntry;
 
    if (NULL == Window)
@@ -859,76 +1053,18 @@ DceResetActiveDCEs(PWND Window)
       ListEntry = ListEntry->Flink;
       if (0 == (pDCE->DCXFlags & (DCX_DCEEMPTY|DCX_INDESTROY)))
       {
-         if (UserHMGetHandle(Window) == pDCE->hwndCurrent)
-         {
-            CurrentWindow = Window;
-         }
-         else
-         {
-            if (!pDCE->hwndCurrent)
-               CurrentWindow = NULL;
-            else
-               CurrentWindow = UserGetWindowObject(pDCE->hwndCurrent);
-            if (NULL == CurrentWindow)
-            {
-               continue;
-            }
-         }
-
-         RgnVisible = DceCalculateVisRgn(pDCE,
-                                         CurrentWindow,
-                                         pDCE->DCXFlags,
-                                         TRUE);
-
          dc = DC_LockDcAnyProcess(pDCE->hDC);
          if (dc == NULL)
+            continue;
+         if (!DceResetLockedDCE(Window, pDCE, dc, &CurrentWindow))
          {
-            if (RgnVisible != NULL)
-               REGION_Delete(RgnVisible);
+            DC_UnlockDc(dc);
             continue;
          }
-         if (Window == CurrentWindow || IntIsChildWindow(Window, CurrentWindow))
-         {
-            if (pDCE->DCXFlags & DCX_WINDOW)
-            {
-               DeltaX = CurrentWindow->rcWindow.left - dc->ptlDCOrig.x;
-               DeltaY = CurrentWindow->rcWindow.top - dc->ptlDCOrig.y;
-               dc->ptlDCOrig.x = CurrentWindow->rcWindow.left;
-               dc->ptlDCOrig.y = CurrentWindow->rcWindow.top;
-            }
-            else
-            {
-               DeltaX = CurrentWindow->rcClient.left - dc->ptlDCOrig.x;
-               DeltaY = CurrentWindow->rcClient.top - dc->ptlDCOrig.y;
-               dc->ptlDCOrig.x = CurrentWindow->rcClient.left;
-               dc->ptlDCOrig.y = CurrentWindow->rcClient.top;
-            }
-
-            if (NULL != dc->dclevel.prgnClip)
-            {
-               REGION_bOffsetRgn(dc->dclevel.prgnClip, DeltaX, DeltaY);
-               dc->fs |= DC_DIRTY_RAO;
-            }
-            if (NULL != pDCE->hrgnClip)
-            {
-               PREGION RgnClip = REGION_LockRgnAnyProcess(pDCE->hrgnClip);
-
-               if (RgnClip)
-               {
-                  REGION_bOffsetRgn(RgnClip, DeltaX, DeltaY);
-                  REGION_UnlockRgn(RgnClip);
-               }
-            }
-         }
-
-         pDCE->DCXFlags &= ~DCX_DCEDIRTY;
-         IntGdiSelectVisRgn(dc, RgnVisible);
          DC_UnlockDc(dc);
 
-         IntEngWindowChanged(CurrentWindow, WOC_RGN_CLIENT);
-
-         if (RgnVisible != NULL)
-            REGION_Delete(RgnVisible);
+         if (CurrentWindow)
+            IntEngWindowChanged(CurrentWindow, WOC_RGN_CLIENT);
       }
    }
 }
