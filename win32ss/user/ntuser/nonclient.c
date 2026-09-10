@@ -968,9 +968,9 @@ NC_DrawFrame( HDC hDC, RECT *CurrentRect, BOOL Active, DWORD Style, DWORD ExStyl
 }
 
 static HDC
-NC_StartBufferedCaption(
+NC_StartBufferedRect(
    _In_ HDC hDC,
-   _In_ const RECT *CaptionRect,
+   _In_ const RECT *Rect,
    _Out_ HBITMAP *Bitmap,
    _Out_ HBITMAP *OldBitmap)
 {
@@ -980,7 +980,7 @@ NC_StartBufferedCaption(
    *Bitmap = NULL;
    *OldBitmap = NULL;
 
-   if (!hDC || RECTL_bIsEmptyRect(CaptionRect))
+   if (!hDC || RECTL_bIsEmptyRect(Rect))
       return hDC;
 
    hdcBuffer = NtGdiCreateCompatibleDC(hDC);
@@ -988,8 +988,8 @@ NC_StartBufferedCaption(
       return hDC;
 
    hbmBuffer = NtGdiCreateCompatibleBitmap(hDC,
-                                            CaptionRect->right,
-                                            CaptionRect->bottom);
+                                            Rect->right,
+                                            Rect->bottom);
    if (!hbmBuffer)
    {
       IntGdiDeleteDC(hdcBuffer, FALSE);
@@ -1005,13 +1005,13 @@ NC_StartBufferedCaption(
    }
 
    NtGdiBitBlt(hdcBuffer,
-                CaptionRect->left,
-                CaptionRect->top,
-                CaptionRect->right - CaptionRect->left,
-                CaptionRect->bottom - CaptionRect->top,
+                Rect->left,
+                Rect->top,
+                Rect->right - Rect->left,
+                Rect->bottom - Rect->top,
                 hDC,
-                CaptionRect->left,
-                CaptionRect->top,
+                Rect->left,
+                Rect->top,
                 SRCCOPY,
                 CLR_INVALID,
                 0);
@@ -1022,10 +1022,10 @@ NC_StartBufferedCaption(
 }
 
 static VOID
-NC_EndBufferedCaption(
+NC_EndBufferedRect(
    _In_ HDC hDC,
    _In_ HDC hdcBuffer,
-   _In_ const RECT *CaptionRect,
+   _In_ const RECT *Rect,
    _In_opt_ HBITMAP Bitmap,
    _In_opt_ HBITMAP OldBitmap)
 {
@@ -1033,19 +1033,49 @@ NC_EndBufferedCaption(
       return;
 
    NtGdiBitBlt(hDC,
-                CaptionRect->left,
-                CaptionRect->top,
-                CaptionRect->right - CaptionRect->left,
-                CaptionRect->bottom - CaptionRect->top,
+                Rect->left,
+                Rect->top,
+                Rect->right - Rect->left,
+                Rect->bottom - Rect->top,
                 hdcBuffer,
-                CaptionRect->left,
-                CaptionRect->top,
+                Rect->left,
+                Rect->top,
                 SRCCOPY,
                 CLR_INVALID,
                 0);
    NtGdiSelectBitmap(hdcBuffer, OldBitmap);
    GreDeleteObject(Bitmap);
    IntGdiDeleteDC(hdcBuffer, FALSE);
+}
+
+static UINT
+NC_DrawBufferedMenuBar(
+   _In_ HDC hDC,
+   _Inout_ RECT *MenuRect,
+   _In_ PWND pWnd)
+{
+   HBITMAP hbmMenu, hbmMenuOld;
+   HDC hdcMenu;
+   UINT Height;
+
+   if (MenuRect->bottom > MenuRect->top)
+      Height = MenuRect->bottom - MenuRect->top;
+   else
+      Height = MENU_DrawMenuBar(hDC, MenuRect, pWnd, TRUE);
+   if (!Height)
+      return 0;
+
+   hdcMenu = NC_StartBufferedRect(hDC,
+                                  MenuRect,
+                                  &hbmMenu,
+                                  &hbmMenuOld);
+   MENU_DrawMenuBar(hdcMenu, MenuRect, pWnd, FALSE);
+   NC_EndBufferedRect(hDC,
+                      hdcMenu,
+                      MenuRect,
+                      hbmMenu,
+                      hbmMenuOld);
+   return Height;
 }
 
 VOID UserDrawCaptionBar(
@@ -1130,10 +1160,10 @@ VOID UserDrawCaptionBar(
       {
          pIcon = NC_IconForWindow(pWnd); // Force redraw of caption with icon if DC_ICON not flaged....
       }
-      hdcCaption = NC_StartBufferedCaption(hDC,
-                                           &TempRect,
-                                           &hbmCaption,
-                                           &hbmCaptionOld);
+      hdcCaption = NC_StartBufferedRect(hDC,
+                                        &TempRect,
+                                        &hbmCaption,
+                                        &hbmCaptionOld);
       UserDrawCaption(pWnd, hdcCaption, &TempRect, NULL,
                       pIcon ? UserHMGetHandle(pIcon) : NULL, NULL, Flags);
 
@@ -1147,11 +1177,11 @@ VOID UserDrawCaptionBar(
             UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONMAX);
          }
       }
-      NC_EndBufferedCaption(hDC,
-                            hdcCaption,
-                            &TempRect,
-                            hbmCaption,
-                            hbmCaptionOld);
+      NC_EndBufferedRect(hDC,
+                         hdcCaption,
+                         &TempRect,
+                         hbmCaption,
+                         hbmCaptionOld);
 
       if (!(Style & WS_MINIMIZE))
       {
@@ -1179,7 +1209,7 @@ VOID UserDrawCaptionBar(
           {
              TempRect = CurrentRect;
              TempRect.bottom = TempRect.top + menu->cyMenu; // Should be pWnd->spmenu->cyMenu;
-             CurrentRect.top += MENU_DrawMenuBar(hDC, &TempRect, pWnd, FALSE);
+             CurrentRect.top += NC_DrawBufferedMenuBar(hDC, &TempRect, pWnd);
           }
       }
 
@@ -1314,10 +1344,10 @@ NC_DoNCPaint(PWND pWnd, HDC hDC, INT Flags)
          CurrentRect.top += UserGetSystemMetrics(SM_CYCAPTION);
       }
 
-      hdcCaption = NC_StartBufferedCaption(hDC,
-                                           &TempRect,
-                                           &hbmCaption,
-                                           &hbmCaptionOld);
+      hdcCaption = NC_StartBufferedRect(hDC,
+                                        &TempRect,
+                                        &hbmCaption,
+                                        &hbmCaptionOld);
       UserDrawCaption(pWnd, hdcCaption, &TempRect, NULL, NULL, NULL, Flags);
 
       /* Draw buttons */
@@ -1330,11 +1360,11 @@ NC_DoNCPaint(PWND pWnd, HDC hDC, INT Flags)
             UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONMAX);
          }
       }
-      NC_EndBufferedCaption(hDC,
-                            hdcCaption,
-                            &TempRect,
-                            hbmCaption,
-                            hbmCaptionOld);
+      NC_EndBufferedRect(hDC,
+                         hdcCaption,
+                         &TempRect,
+                         hbmCaption,
+                         hbmCaptionOld);
       if (!(Style & WS_MINIMIZE))
       {
         /* Line under caption */
@@ -1365,7 +1395,7 @@ NC_DoNCPaint(PWND pWnd, HDC hDC, INT Flags)
              {
                 TempRect = CurrentRect;
                 TempRect.bottom = TempRect.top + menu->cyMenu; // Should be pWnd->spmenu->cyMenu;
-                CurrentRect.top += MENU_DrawMenuBar(hDC, &TempRect, pWnd, FALSE);
+                CurrentRect.top += NC_DrawBufferedMenuBar(hDC, &TempRect, pWnd);
              }
          }
      }
