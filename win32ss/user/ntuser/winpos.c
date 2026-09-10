@@ -1819,7 +1819,7 @@ co_WinPosSetWindowPos(
    RECTL CopyRect;
    PWND Ancestor;
    PWND Child;
-   BOOL bPointerInWindow, PosChanged = FALSE;
+   BOOL bPointerInWindow, PosChanged = FALSE, ZOrderChanged = FALSE;
    PTHREADINFO pti = PsGetCurrentThreadWin32Thread();
 
    ASSERT_REFS_CO(Window);
@@ -1946,6 +1946,7 @@ co_WinPosSetWindowPos(
    if (!(WinPos.flags & SWP_NOZORDER) && WinPos.hwnd != UserGetShellWindow())
    {
       IntLinkHwnd(Window, WinPos.hwndInsertAfter);
+      ZOrderChanged = TRUE;
    }
 
    OldWindowRect = Window->rcWindow;
@@ -2397,6 +2398,20 @@ co_WinPosSetWindowPos(
       PWND pWnd = ValidateHwndNoErr(WinPos.hwnd);
       if (pWnd)
          IntNotifyWinEvent(EVENT_OBJECT_LOCATIONCHANGE, pWnd, OBJID_WINDOW, CHILDID_SELF, WEF_SETBYWNDPTI);
+   }
+
+   /*
+    * Activation can wait for an old paint operation in DceResetActiveDCEs.
+    * Paint the newly exposed client after that operation has retired; the
+    * RDW_ERASENOW path above only processes non-client and erase painting.
+    */
+   if (ZOrderChanged &&
+       !(flags & (SWP_NOACTIVATE | SWP_NOREDRAW | SWP_HIDEWINDOW)) &&
+       Window->head.pti == pti &&
+       Window->head.pti->MessageQueue == gpqForeground &&
+       UserIsDesktopWindow(Window->spwndParent))
+   {
+      UserUpdateWindows(Window, RDW_ALLCHILDREN);
    }
 
    /* Send WM_IME_SYSTEM:IMS_UPDATEIMEUI to the IME windows if necessary */

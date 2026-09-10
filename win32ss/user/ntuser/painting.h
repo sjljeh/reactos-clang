@@ -22,6 +22,7 @@ INT FASTCALL UserRealizePalette(HDC);
 INT FASTCALL co_UserGetUpdateRgn(PWND, HRGN, BOOL);
 BOOL FASTCALL co_UserGetUpdateRect(PWND, PRECT, BOOL);
 VOID FASTCALL co_IntPaintWindows(PWND Window, ULONG Flags, BOOL Recurse);
+VOID FASTCALL UserUpdateWindows(_In_ PWND pWnd, _In_ ULONG Flags);
 VOID FASTCALL IntSendSyncPaint(PWND, ULONG);
 VOID FASTCALL co_IntUpdateWindows(PWND, ULONG, BOOL);
 BOOL FASTCALL IntIsWindowDirty(PWND);
