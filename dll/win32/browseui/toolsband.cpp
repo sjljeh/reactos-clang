@@ -273,7 +273,7 @@ HRESULT STDMETHODCALLTYPE CToolsBand::SetSite(IUnknown* pUnkSite){
         return E_FAIL;
 
     toolbar = CreateWindowEx(
-                    TBSTYLE_EX_DOUBLEBUFFER,
+                    0,
                     TOOLBARCLASSNAMEW, NULL,
                     WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN |
                     TBSTYLE_TOOLTIPS | TBSTYLE_TRANSPARENT | TBSTYLE_REGISTERDROP | TBSTYLE_LIST | TBSTYLE_FLAT |
@@ -287,7 +287,8 @@ HRESULT STDMETHODCALLTYPE CToolsBand::SetSite(IUnknown* pUnkSite){
     SendMessage(WM_USER + 100, GetSystemMetrics(SM_CXEDGE) / 2, 0);
     SendMessage(TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
     SendMessage(TB_SETMAXTEXTROWS, 1, 0);
-    SendMessage(TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_HIDECLIPPEDBUTTONS | TBSTYLE_EX_MIXEDBUTTONS | TBSTYLE_EX_DRAWDDARROWS);
+    SendMessage(TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DOUBLEBUFFER | TBSTYLE_EX_HIDECLIPPEDBUTTONS |
+                                              TBSTYLE_EX_MIXEDBUTTONS | TBSTYLE_EX_DRAWDDARROWS);
 
     m_himlNormal = ImageList_LoadImageW(_AtlBaseModule.GetResourceInstance(),
                                         MAKEINTRESOURCEW(IDB_SHELL_EXPLORER_LG),
@@ -420,4 +421,3 @@ HRESULT CToolsBand_CreateInstance(REFIID riid, void **ppv)
 {
     return ShellObjectCreator<CToolsBand>(riid, ppv);
 }
-
