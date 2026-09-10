@@ -967,6 +967,87 @@ NC_DrawFrame( HDC hDC, RECT *CurrentRect, BOOL Active, DWORD Style, DWORD ExStyl
    }
 }
 
+static HDC
+NC_StartBufferedCaption(
+   _In_ HDC hDC,
+   _In_ const RECT *CaptionRect,
+   _Out_ HBITMAP *Bitmap,
+   _Out_ HBITMAP *OldBitmap)
+{
+   HBITMAP hbmBuffer, hbmOld;
+   HDC hdcBuffer;
+
+   *Bitmap = NULL;
+   *OldBitmap = NULL;
+
+   if (!hDC || RECTL_bIsEmptyRect(CaptionRect))
+      return hDC;
+
+   hdcBuffer = NtGdiCreateCompatibleDC(hDC);
+   if (!hdcBuffer)
+      return hDC;
+
+   hbmBuffer = NtGdiCreateCompatibleBitmap(hDC,
+                                            CaptionRect->right,
+                                            CaptionRect->bottom);
+   if (!hbmBuffer)
+   {
+      IntGdiDeleteDC(hdcBuffer, FALSE);
+      return hDC;
+   }
+
+   hbmOld = NtGdiSelectBitmap(hdcBuffer, hbmBuffer);
+   if (!hbmOld)
+   {
+      GreDeleteObject(hbmBuffer);
+      IntGdiDeleteDC(hdcBuffer, FALSE);
+      return hDC;
+   }
+
+   NtGdiBitBlt(hdcBuffer,
+                CaptionRect->left,
+                CaptionRect->top,
+                CaptionRect->right - CaptionRect->left,
+                CaptionRect->bottom - CaptionRect->top,
+                hDC,
+                CaptionRect->left,
+                CaptionRect->top,
+                SRCCOPY,
+                CLR_INVALID,
+                0);
+
+   *Bitmap = hbmBuffer;
+   *OldBitmap = hbmOld;
+   return hdcBuffer;
+}
+
+static VOID
+NC_EndBufferedCaption(
+   _In_ HDC hDC,
+   _In_ HDC hdcBuffer,
+   _In_ const RECT *CaptionRect,
+   _In_opt_ HBITMAP Bitmap,
+   _In_opt_ HBITMAP OldBitmap)
+{
+   if (hdcBuffer == hDC)
+      return;
+
+   NtGdiBitBlt(hDC,
+                CaptionRect->left,
+                CaptionRect->top,
+                CaptionRect->right - CaptionRect->left,
+                CaptionRect->bottom - CaptionRect->top,
+                hdcBuffer,
+                CaptionRect->left,
+                CaptionRect->top,
+                SRCCOPY,
+                CLR_INVALID,
+                0);
+   NtGdiSelectBitmap(hdcBuffer, OldBitmap);
+   GreDeleteObject(Bitmap);
+   IntGdiDeleteDC(hdcBuffer, FALSE);
+}
+
 VOID UserDrawCaptionBar(
    PWND pWnd,
    HDC hDC,
@@ -1018,6 +1099,9 @@ VOID UserDrawCaptionBar(
    /* Draw caption */
    if ((Style & WS_CAPTION) == WS_CAPTION)
    {
+      HBITMAP hbmCaption, hbmCaptionOld;
+      HDC hdcCaption;
+
       TempRect = CurrentRect;
 
       Flags |= DC_TEXT|DC_BUTTONS; // Icon will be checked if not already set.
@@ -1046,18 +1130,28 @@ VOID UserDrawCaptionBar(
       {
          pIcon = NC_IconForWindow(pWnd); // Force redraw of caption with icon if DC_ICON not flaged....
       }
-      UserDrawCaption(pWnd, hDC, &TempRect, NULL, pIcon ? UserHMGetHandle(pIcon) : NULL, NULL, Flags);
+      hdcCaption = NC_StartBufferedCaption(hDC,
+                                           &TempRect,
+                                           &hbmCaption,
+                                           &hbmCaptionOld);
+      UserDrawCaption(pWnd, hdcCaption, &TempRect, NULL,
+                      pIcon ? UserHMGetHandle(pIcon) : NULL, NULL, Flags);
 
       /* Draw buttons */
       if (Style & WS_SYSMENU)
       {
-         UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hDC, FALSE, DFCS_CAPTIONCLOSE);
+         UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONCLOSE);
          if ((Style & (WS_MAXIMIZEBOX | WS_MINIMIZEBOX)) && !(ExStyle & WS_EX_TOOLWINDOW))
          {
-            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hDC, FALSE, DFCS_CAPTIONMIN);
-            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hDC, FALSE, DFCS_CAPTIONMAX);
+            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONMIN);
+            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONMAX);
          }
       }
+      NC_EndBufferedCaption(hDC,
+                            hdcCaption,
+                            &TempRect,
+                            hbmCaption,
+                            hbmCaptionOld);
 
       if (!(Style & WS_MINIMIZE))
       {
@@ -1180,6 +1274,8 @@ NC_DoNCPaint(PWND pWnd, HDC hDC, INT Flags)
    /* Draw caption */
    if ((Style & WS_CAPTION) == WS_CAPTION)
    {
+      HBITMAP hbmCaption, hbmCaptionOld;
+      HDC hdcCaption;
       HPEN PreviousPen;
       BOOL Gradient = FALSE;
 
@@ -1218,18 +1314,27 @@ NC_DoNCPaint(PWND pWnd, HDC hDC, INT Flags)
          CurrentRect.top += UserGetSystemMetrics(SM_CYCAPTION);
       }
 
-      UserDrawCaption(pWnd, hDC, &TempRect, NULL, NULL, NULL, Flags);
+      hdcCaption = NC_StartBufferedCaption(hDC,
+                                           &TempRect,
+                                           &hbmCaption,
+                                           &hbmCaptionOld);
+      UserDrawCaption(pWnd, hdcCaption, &TempRect, NULL, NULL, NULL, Flags);
 
       /* Draw buttons */
       if (Style & WS_SYSMENU)
       {
-         UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hDC, FALSE, DFCS_CAPTIONCLOSE);
+         UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONCLOSE);
          if ((Style & (WS_MAXIMIZEBOX | WS_MINIMIZEBOX)) && !(ExStyle & WS_EX_TOOLWINDOW))
          {
-            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hDC, FALSE, DFCS_CAPTIONMIN);
-            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hDC, FALSE, DFCS_CAPTIONMAX);
+            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONMIN);
+            UserDrawCaptionButton(pWnd, &TempRect, Style, ExStyle, hdcCaption, FALSE, DFCS_CAPTIONMAX);
          }
       }
+      NC_EndBufferedCaption(hDC,
+                            hdcCaption,
+                            &TempRect,
+                            hbmCaption,
+                            hbmCaptionOld);
       if (!(Style & WS_MINIMIZE))
       {
         /* Line under caption */
