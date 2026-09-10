@@ -1040,12 +1040,59 @@ STATUSBAR_WMNCHitTest (const STATUS_INFO *infoPtr, INT x, INT y)
 static LRESULT
 STATUSBAR_WMPaint (STATUS_INFO *infoPtr, HDC hdc)
 {
+    HBITMAP hbmBuffer = NULL, hbmOld = NULL;
+    HDC hdcBuffer = NULL;
     PAINTSTRUCT ps;
+    RECT rcClient;
 
     TRACE("\n");
     if (hdc) return STATUSBAR_Refresh (infoPtr, hdc);
     hdc = BeginPaint (infoPtr->Self, &ps);
-    STATUSBAR_Refresh (infoPtr, hdc);
+
+    if (GetClientRect(infoPtr->Self, &rcClient) && !IsRectEmpty(&rcClient))
+    {
+        hdcBuffer = CreateCompatibleDC(hdc);
+        hbmBuffer = CreateCompatibleBitmap(hdc, rcClient.right, rcClient.bottom);
+        if (hdcBuffer && hbmBuffer &&
+            (hbmOld = SelectObject(hdcBuffer, hbmBuffer)) &&
+            hbmOld != HGDI_ERROR)
+        {
+            IntersectClipRect(hdcBuffer,
+                              ps.rcPaint.left,
+                              ps.rcPaint.top,
+                              ps.rcPaint.right,
+                              ps.rcPaint.bottom);
+            BitBlt(hdcBuffer,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   ps.rcPaint.right - ps.rcPaint.left,
+                   ps.rcPaint.bottom - ps.rcPaint.top,
+                   hdc,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   SRCCOPY);
+            STATUSBAR_Refresh(infoPtr, hdcBuffer);
+            BitBlt(hdc,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   ps.rcPaint.right - ps.rcPaint.left,
+                   ps.rcPaint.bottom - ps.rcPaint.top,
+                   hdcBuffer,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   SRCCOPY);
+        }
+    }
+
+    if (!hbmOld || hbmOld == HGDI_ERROR)
+        STATUSBAR_Refresh(infoPtr, hdc);
+
+    if (hbmOld && hbmOld != HGDI_ERROR)
+        SelectObject(hdcBuffer, hbmOld);
+    if (hbmBuffer)
+        DeleteObject(hbmBuffer);
+    if (hdcBuffer)
+        DeleteDC(hdcBuffer);
     EndPaint (infoPtr->Self, &ps);
 
     return 0;
@@ -1257,6 +1304,9 @@ StatusWindowProc (HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 	case WM_DESTROY:
 	    return STATUSBAR_WMDestroy (infoPtr);
+
+	case WM_ERASEBKGND:
+	    return TRUE;
 
 	case WM_GETFONT:
 	    return (LRESULT)(infoPtr->hFont? infoPtr->hFont : infoPtr->hDefaultFont);
