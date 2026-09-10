@@ -1819,9 +1819,7 @@ co_WinPosSetWindowPos(
    RECTL CopyRect;
    PWND Ancestor;
    PWND Child;
-   PDCE_LAYOUT_LOCK LayoutLock = NULL;
    BOOL bPointerInWindow, PosChanged = FALSE, ZOrderChanged = FALSE;
-   BOOL NotifyShow = FALSE;
    PTHREADINFO pti = PsGetCurrentThreadWin32Thread();
 
    ASSERT_REFS_CO(Window);
@@ -2009,12 +2007,9 @@ co_WinPosSetWindowPos(
          }
       }
 
-      /* Keep old drawing outside the new window until its clipping is ready. */
-      if (UserIsDesktopWindow(Window->spwndParent))
-         LayoutLock = DceBeginLayoutLock();
       Window->style |= WS_VISIBLE; //IntSetStyle( Window, WS_VISIBLE, 0 );
       Window->head.pti->cVisWindows++;
-      NotifyShow = TRUE;
+      IntNotifyWinEvent(EVENT_OBJECT_SHOW, Window, OBJID_WINDOW, CHILDID_SELF, WEF_SETBYWNDPTI);
    }
    else
    {
@@ -2028,13 +2023,7 @@ co_WinPosSetWindowPos(
                      NewWindowRect.top - OldWindowRect.top);
    }
 
-   if (LayoutLock)
-      DceEndLayoutLock(Window, LayoutLock);
-   else
-      DceResetActiveDCEs(Window); // For WS_VISIBLE changes.
-
-   if (NotifyShow)
-      IntNotifyWinEvent(EVENT_OBJECT_SHOW, Window, OBJID_WINDOW, CHILDID_SELF, WEF_SETBYWNDPTI);
+   DceResetActiveDCEs(Window); // For WS_VISIBLE changes.
 
    // Change or update, set send non-client paint flag.
    if ( Window->style & WS_VISIBLE &&
