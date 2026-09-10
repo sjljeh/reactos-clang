@@ -1643,7 +1643,7 @@ static HBITMAP UXTHEME_DrawThemePartToDib(HTHEME hTheme, HDC hdc, int iPartId, i
 
     DeleteObject(hbrBack);
     SelectObject(hdcMem, hbmpOld);
-    DeleteObject(hdcMem);
+    DeleteDC(hdcMem);
 
     return hbmp;
 }
