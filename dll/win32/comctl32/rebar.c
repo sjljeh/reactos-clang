@@ -171,6 +171,7 @@ typedef struct
     SIZE     calcSize;    /* calculated rebar size - coordinates swapped for CCS_VERT */
     BOOL     bUnicode;    /* TRUE if parent wants notify in W format */
     BOOL     DoRedraw;    /* TRUE to actually draw bands */
+    BOOL     bInBufferedPaint; /* BeginPaint may request a background erase */
     BOOL     bBufferedErase; /* background erase deferred to buffered paint */
     UINT     fStatus;     /* Status flags (see below)  */
     HCURSOR  hcurArrow;   /* handle to the arrow cursor */
@@ -3463,7 +3464,9 @@ REBAR_Paint (REBAR_INFO *infoPtr, HDC hdc)
         RECT rcClient;
         BOOL bBuffered = FALSE, bErase;
 
+        infoPtr->bInBufferedPaint = TRUE;
         hdc = BeginPaint (infoPtr->hwndSelf, &ps);
+        infoPtr->bInBufferedPaint = FALSE;
         bErase = ps.fErase || infoPtr->bBufferedErase;
         infoPtr->bBufferedErase = FALSE;
         TRACE("painting (%s)\n", wine_dbgstr_rect(&ps.rcPaint));
@@ -3813,8 +3816,12 @@ REBAR_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	    return REBAR_Destroy (infoPtr);
 
         case WM_ERASEBKGND:
-            infoPtr->bBufferedErase = TRUE;
-            return TRUE;
+            if (infoPtr->bInBufferedPaint)
+            {
+                infoPtr->bBufferedErase = TRUE;
+                return TRUE;
+            }
+            return REBAR_EraseBkGnd(infoPtr, (HDC)wParam);
 
 	case WM_GETFONT:
 	    return REBAR_GetFont (infoPtr);
