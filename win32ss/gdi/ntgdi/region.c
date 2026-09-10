@@ -2356,19 +2356,39 @@ REGION_vSyncRegion(
     prgnattr->AttrFlags &= ~(ATTR_RGN_DIRTY | ATTR_RGN_VALID);
 }
 
-PREGION
+static PREGION
 FASTCALL
-REGION_LockRgn(
-    _In_ HRGN hrgn)
+REGION_LockRgnWithFlags(
+    _In_ HRGN hrgn,
+    _In_ FLONG fl)
 {
     PREGION prgn;
 
-    prgn = GDIOBJ_LockObject(hrgn, GDIObjType_RGN_TYPE);
+    if (fl & GDIOBJFLAG_IGNOREPID)
+        prgn = GDIOBJ_LockObjectAnyProcess(hrgn, GDIObjType_RGN_TYPE);
+    else
+        prgn = GDIOBJ_LockObject(hrgn, GDIObjType_RGN_TYPE);
     if (prgn == NULL)
         return NULL;
 
     REGION_vSyncRegion(prgn);
     return prgn;
+}
+
+PREGION
+FASTCALL
+REGION_LockRgn(
+    _In_ HRGN hrgn)
+{
+    return REGION_LockRgnWithFlags(hrgn, GDIOBJFLAG_DEFAULT);
+}
+
+PREGION
+FASTCALL
+REGION_LockRgnAnyProcess(
+    _In_ HRGN hrgn)
+{
+    return REGION_LockRgnWithFlags(hrgn, GDIOBJFLAG_IGNOREPID);
 }
 
 VOID

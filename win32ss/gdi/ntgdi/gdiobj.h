@@ -149,6 +149,12 @@ GDIOBJ_LockObject(
 
 PGDIOBJ
 NTAPI
+GDIOBJ_LockObjectAnyProcess(
+    _In_ HGDIOBJ hobj,
+    _In_ UCHAR objt);
+
+PGDIOBJ
+NTAPI
 GDIOBJ_TryLockObject(
     HGDIOBJ hobj,
     UCHAR objt);

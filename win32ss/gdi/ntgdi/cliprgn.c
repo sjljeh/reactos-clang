@@ -56,24 +56,15 @@ UpdateVisRgn(
 //
 VOID
 FASTCALL
-GdiSelectVisRgn(
-    HDC hdc,
-    PREGION prgn)
+IntGdiSelectVisRgn(
+    _Inout_ PDC dc,
+    _In_opt_ PREGION prgn)
 {
-    DC *dc;
-
-    if (!(dc = DC_LockDc(hdc)))
-    {
-        EngSetLastError(ERROR_INVALID_HANDLE);
-        return;
-    }
-
     if (!prgn)
     {
        DPRINT1("SVR: Setting NULL Region\n");
        IntGdiReleaseVisRgn(dc);
        IntSetDefaultRegion(dc);
-       DC_UnlockDc(dc);
        return;
     }
 
@@ -84,7 +75,23 @@ GdiSelectVisRgn(
 
     REGION_bCopy(dc->prgnVis, prgn);
     REGION_bOffsetRgn(dc->prgnVis, -dc->ptlDCOrig.x, -dc->ptlDCOrig.y);
+}
 
+VOID
+FASTCALL
+GdiSelectVisRgn(
+    _In_ HDC hdc,
+    _In_opt_ PREGION prgn)
+{
+    DC *dc;
+
+    if (!(dc = DC_LockDc(hdc)))
+    {
+        EngSetLastError(ERROR_INVALID_HANDLE);
+        return;
+    }
+
+    IntGdiSelectVisRgn(dc, prgn);
     DC_UnlockDc(dc);
 }
 

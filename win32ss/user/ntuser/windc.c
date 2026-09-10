@@ -187,9 +187,12 @@ DceDeleteClipRgn(DCE* Dce)
    IntGdiSetHookFlags(Dce->hDC, DCHF_INVALIDATEVISRGN);
 }
 
-VOID
-FASTCALL
-DceUpdateVisRgn(DCE *Dce, PWND Window, ULONG Flags)
+static PREGION FASTCALL
+DceCalculateVisRgn(
+   _In_ DCE *Dce,
+   _In_opt_ PWND Window,
+   _In_ ULONG Flags,
+   _In_ BOOLEAN AnyProcess)
 {
    PREGION RgnVisible = NULL;
    ULONG DcxFlags;
@@ -240,7 +243,10 @@ noparent:
       PREGION RgnClip = NULL;
 
       if (Dce->hrgnClip != NULL)
-          RgnClip = REGION_LockRgn(Dce->hrgnClip);
+      {
+          RgnClip = AnyProcess ? REGION_LockRgnAnyProcess(Dce->hrgnClip) :
+                                 REGION_LockRgn(Dce->hrgnClip);
+      }
 
       if (RgnClip)
       {
@@ -258,13 +264,31 @@ noparent:
    }
    else if ((Flags & DCX_EXCLUDERGN) && Dce->hrgnClip != NULL)
    {
-       PREGION RgnClip = REGION_LockRgn(Dce->hrgnClip);
-       IntGdiCombineRgn(RgnVisible, RgnVisible, RgnClip, RGN_DIFF);
-       REGION_UnlockRgn(RgnClip);
+       PREGION RgnClip;
+
+       RgnClip = AnyProcess ? REGION_LockRgnAnyProcess(Dce->hrgnClip) :
+                              REGION_LockRgn(Dce->hrgnClip);
+       if (RgnClip)
+       {
+          IntGdiCombineRgn(RgnVisible, RgnVisible, RgnClip, RGN_DIFF);
+          REGION_UnlockRgn(RgnClip);
+       }
    }
+
+   return RgnVisible;
+}
+
+VOID
+FASTCALL
+DceUpdateVisRgn(DCE *Dce, PWND Window, ULONG Flags)
+{
+   PREGION RgnVisible;
+
+   RgnVisible = DceCalculateVisRgn(Dce, Window, Flags, FALSE);
 
    Dce->DCXFlags &= ~DCX_DCEDIRTY;
    GdiSelectVisRgn(Dce->hDC, RgnVisible);
+
    /* Tell GDI driver */
    if (Window)
        IntEngWindowChanged(Window, WOC_RGN_CLIENT);
@@ -817,6 +841,7 @@ DceResetActiveDCEs(PWND Window)
 {
    DCE *pDCE;
    PDC dc;
+   PREGION RgnVisible;
    PWND CurrentWindow;
    INT DeltaX;
    INT DeltaY;
@@ -850,9 +875,16 @@ DceResetActiveDCEs(PWND Window)
             }
          }
 
-         if (!GreIsHandleValid(pDCE->hDC) ||
-             (dc = DC_LockDc(pDCE->hDC)) == NULL)
+         RgnVisible = DceCalculateVisRgn(pDCE,
+                                         CurrentWindow,
+                                         pDCE->DCXFlags,
+                                         TRUE);
+
+         dc = DC_LockDcAnyProcess(pDCE->hDC);
+         if (dc == NULL)
          {
+            if (RgnVisible != NULL)
+               REGION_Delete(RgnVisible);
             continue;
          }
          if (Window == CurrentWindow || IntIsChildWindow(Window, CurrentWindow))
@@ -879,13 +911,24 @@ DceResetActiveDCEs(PWND Window)
             }
             if (NULL != pDCE->hrgnClip)
             {
-               NtGdiOffsetRgn(pDCE->hrgnClip, DeltaX, DeltaY);
+               PREGION RgnClip = REGION_LockRgnAnyProcess(pDCE->hrgnClip);
+
+               if (RgnClip)
+               {
+                  REGION_bOffsetRgn(RgnClip, DeltaX, DeltaY);
+                  REGION_UnlockRgn(RgnClip);
+               }
             }
          }
+
+         pDCE->DCXFlags &= ~DCX_DCEDIRTY;
+         IntGdiSelectVisRgn(dc, RgnVisible);
          DC_UnlockDc(dc);
 
-         DceUpdateVisRgn(pDCE, CurrentWindow, pDCE->DCXFlags);
-         IntGdiSetHookFlags(pDCE->hDC, DCHF_VALIDATEVISRGN);
+         IntEngWindowChanged(CurrentWindow, WOC_RGN_CLIENT);
+
+         if (RgnVisible != NULL)
+            REGION_Delete(RgnVisible);
       }
    }
 }
