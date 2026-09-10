@@ -1819,6 +1819,7 @@ co_WinPosSetWindowPos(
    RECTL CopyRect;
    PWND Ancestor;
    PWND Child;
+   PDCE_LAYOUT_LOCK LayoutLock = NULL;
    BOOL bPointerInWindow, PosChanged = FALSE;
    PTHREADINFO pti = PsGetCurrentThreadWin32Thread();
 
@@ -1938,6 +1939,12 @@ co_WinPosSetWindowPos(
 
    WvrFlags = co_WinPosDoNCCALCSize(Window, &WinPos, &NewWindowRect, &NewClientRect, valid_rects);
 
+   if (!(WinPos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW)) &&
+       (WinPos.flags & SWP_AGG_STATUSFLAGS) != SWP_AGG_NOPOSCHANGE)
+   {
+      LayoutLock = DceBeginLayoutLock();
+   }
+
 //   ERR("co_WinPosDoNCCALCSize returned 0x%x\n valid dest: %d %d %d %d\n valid src : %d %d %d %d\n", WvrFlags,
 //      valid_rects[0].left,valid_rects[0].top,valid_rects[0].right,valid_rects[0].bottom,
 //      valid_rects[1].left,valid_rects[1].top,valid_rects[1].right,valid_rects[1].bottom);
@@ -2010,11 +2017,6 @@ co_WinPosSetWindowPos(
       Window->head.pti->cVisWindows++;
       IntNotifyWinEvent(EVENT_OBJECT_SHOW, Window, OBJID_WINDOW, CHILDID_SELF, WEF_SETBYWNDPTI);
    }
-   else
-   {
-      IntCheckFullscreen(Window);
-   }
-
    if (Window->hrgnUpdate != NULL && Window->hrgnUpdate != HRGN_WINDOW)
    {
       NtGdiOffsetRgn(Window->hrgnUpdate,
@@ -2022,7 +2024,13 @@ co_WinPosSetWindowPos(
                      NewWindowRect.top - OldWindowRect.top);
    }
 
-   DceResetActiveDCEs(Window); // For WS_VISIBLE changes.
+   if (LayoutLock)
+      DceEndLayoutLock(Window, LayoutLock);
+   else
+      DceResetActiveDCEs(Window); // For WS_VISIBLE changes.
+
+   if (!(WinPos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW)))
+      IntCheckFullscreen(Window);
 
    // Change or update, set send non-client paint flag.
    if ( Window->style & WS_VISIBLE &&
