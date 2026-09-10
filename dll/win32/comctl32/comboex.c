@@ -78,6 +78,10 @@ typedef struct
 #define  WCBE_EDITFOCUSED	0x00000004  /* Edit control has focus */
 #define  WCBE_MOUSECAPTURED	0x00000008  /* Combo has captured mouse */
 #define  WCBE_MOUSEDRAGGED      0x00000010  /* User has dragged in combo */
+#define  WCBE_COMBOPAINT        0x00000020  /* buffered ComboBox paint in progress */
+#define  WCBE_COMBOERASE        0x00000040  /* ComboBox erase deferred to paint */
+#define  WCBE_EDITPAINT         0x00000080  /* buffered Edit paint in progress */
+#define  WCBE_EDITERASE         0x00000100  /* Edit erase deferred to paint */
 
 #define ID_CB_EDIT		1001
 
@@ -1652,6 +1656,99 @@ static LRESULT COMBOEX_WindowPosChanging (const COMBOEX_INFO *infoPtr, WINDOWPOS
     return 0;
 }
 
+static void
+COMBOEX_EraseBackground(HWND hwnd, HDC hdc)
+{
+    COLORREF oldBkColor;
+    RECT rect;
+
+    oldBkColor = SetBkColor(hdc, comctl32_color.clrWindow);
+    GetClientRect(hwnd, &rect);
+    TRACE("erasing (%s)\n", wine_dbgstr_rect(&rect));
+    ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &rect, NULL, 0, NULL);
+    SetBkColor(hdc, oldBkColor);
+}
+
+static LRESULT
+COMBOEX_BufferedPaint(COMBOEX_INFO *infoPtr, HWND hwnd, LPARAM lParam,
+                      DWORD paintFlag, DWORD eraseFlag)
+{
+    HBITMAP hbmBuffer = NULL, hbmOld = NULL;
+    HDC hdc, hdcBuffer = NULL, hdcPaint;
+    PAINTSTRUCT ps;
+    RECT rcClient;
+    LRESULT result;
+    BOOL buffered = FALSE, erase;
+
+    infoPtr->flags |= paintFlag;
+    hdc = BeginPaint(hwnd, &ps);
+    infoPtr->flags &= ~paintFlag;
+    erase = ps.fErase || (infoPtr->flags & eraseFlag);
+    infoPtr->flags &= ~eraseFlag;
+    if (!hdc)
+    {
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    hdcPaint = hdc;
+
+    if (GetClientRect(hwnd, &rcClient) && !IsRectEmpty(&rcClient) &&
+        !IsRectEmpty(&ps.rcPaint))
+    {
+        hdcBuffer = CreateCompatibleDC(hdc);
+        hbmBuffer = CreateCompatibleBitmap(hdc, rcClient.right, rcClient.bottom);
+        if (hdcBuffer && hbmBuffer &&
+            (hbmOld = SelectObject(hdcBuffer, hbmBuffer)) &&
+            hbmOld != HGDI_ERROR)
+        {
+            IntersectClipRect(hdcBuffer,
+                              ps.rcPaint.left,
+                              ps.rcPaint.top,
+                              ps.rcPaint.right,
+                              ps.rcPaint.bottom);
+            BitBlt(hdcBuffer,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   ps.rcPaint.right - ps.rcPaint.left,
+                   ps.rcPaint.bottom - ps.rcPaint.top,
+                   hdc,
+                   ps.rcPaint.left,
+                   ps.rcPaint.top,
+                   SRCCOPY);
+            hdcPaint = hdcBuffer;
+            buffered = TRUE;
+        }
+    }
+
+    if (erase)
+        COMBOEX_EraseBackground(hwnd, hdcPaint);
+    result = DefSubclassProc(hwnd, WM_PAINT, (WPARAM)hdcPaint, lParam);
+
+    if (buffered)
+    {
+        BitBlt(hdc,
+               ps.rcPaint.left,
+               ps.rcPaint.top,
+               ps.rcPaint.right - ps.rcPaint.left,
+               ps.rcPaint.bottom - ps.rcPaint.top,
+               hdcBuffer,
+               ps.rcPaint.left,
+               ps.rcPaint.top,
+               SRCCOPY);
+    }
+
+    if (hbmOld && hbmOld != HGDI_ERROR)
+        SelectObject(hdcBuffer, hbmOld);
+    if (hbmBuffer)
+        DeleteObject(hbmBuffer);
+    if (hdcBuffer)
+        DeleteDC(hdcBuffer);
+    EndPaint(hwnd, &ps);
+
+    return result;
+}
+
 static LRESULT CALLBACK
 COMBOEX_EditWndProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
                      UINT_PTR uId, DWORD_PTR ref_data)
@@ -1659,9 +1756,6 @@ COMBOEX_EditWndProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
     COMBOEX_INFO *infoPtr = COMBOEX_GetInfoPtr ((HWND)ref_data);
     NMCBEENDEDITW cbeend;
     WCHAR edit_text[260];
-    COLORREF obkc;
-    HDC hDC;
-    RECT rect;
     LRESULT lret;
 
     TRACE("hwnd=%p msg=%x wparam=%lx lParam=%lx, info_ptr=%p\n",
@@ -1683,13 +1777,20 @@ COMBOEX_EditWndProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 	    return DefSubclassProc(hwnd, uMsg, wParam, lParam);
 
 	case WM_ERASEBKGND:
-            hDC = (HDC) wParam;
-	    obkc = SetBkColor (hDC, comctl32_color.clrWindow);
-            GetClientRect (hwnd, &rect);
-            TRACE("erasing (%s)\n", wine_dbgstr_rect(&rect));
-	    ExtTextOutW (hDC, 0, 0, ETO_OPAQUE, &rect, 0, 0, 0);
-            SetBkColor (hDC, obkc);
+            if (infoPtr->flags & WCBE_EDITPAINT)
+            {
+                infoPtr->flags |= WCBE_EDITERASE;
+                return TRUE;
+            }
+            COMBOEX_EraseBackground(hwnd, (HDC)wParam);
 	    return DefSubclassProc(hwnd, uMsg, wParam, lParam);
+
+        case WM_PAINT:
+            if (!wParam)
+                return COMBOEX_BufferedPaint(infoPtr, hwnd, lParam,
+                                             WCBE_EDITPAINT,
+                                             WCBE_EDITERASE);
+            return DefSubclassProc(hwnd, uMsg, wParam, lParam);
 
 	case WM_KEYDOWN: {
 	    INT_PTR oldItem, selected;
@@ -1816,8 +1917,6 @@ COMBOEX_ComboWndProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
     COMBOEX_INFO *infoPtr = COMBOEX_GetInfoPtr ((HWND)ref_data);
     NMCBEENDEDITW cbeend;
     NMMOUSE nmmse;
-    COLORREF obkc;
-    HDC hDC;
     HWND focusedhwnd;
     RECT rect;
     POINT pt;
@@ -1844,13 +1943,20 @@ COMBOEX_ComboWndProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 	    break;
 
     case WM_ERASEBKGND:
-            hDC = (HDC) wParam;
-	    obkc = SetBkColor (hDC, comctl32_color.clrWindow);
-            GetClientRect (hwnd, &rect);
-            TRACE("erasing (%s)\n", wine_dbgstr_rect(&rect));
-	    ExtTextOutW (hDC, 0, 0, ETO_OPAQUE, &rect, 0, 0, 0);
-            SetBkColor (hDC, obkc);
+            if (infoPtr->flags & WCBE_COMBOPAINT)
+            {
+                infoPtr->flags |= WCBE_COMBOERASE;
+                return TRUE;
+            }
+            COMBOEX_EraseBackground(hwnd, (HDC)wParam);
 	    break;
+
+    case WM_PAINT:
+            if (!wParam)
+                return COMBOEX_BufferedPaint(infoPtr, hwnd, lParam,
+                                             WCBE_COMBOPAINT,
+                                             WCBE_COMBOERASE);
+            return DefSubclassProc(hwnd, uMsg, wParam, lParam);
 
     case WM_SETCURSOR:
 	    /*
