@@ -1975,11 +1975,11 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
    while (ListHead != &MessageQueue->HardwareMessagesListHead)
    {
       CurrentMessage = CONTAINING_RECORD(ListHead, USER_MESSAGE, ListEntry);
-      ListHead = ListHead->Flink;
 
       if (CurrentMessage->bInPlay)
       {
          TRACE("Skip this message due to it is in play!\n");
+         ListHead = ListHead->Flink;
          continue;
       }
 /*
@@ -2005,6 +2005,11 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
 
          UpdateKeyStateFromMsg(MessageQueue, &msg);
          AcceptMessage = co_IntProcessHardwareMessage(&msg, &Remove, &NotForUs, ExtraInfo, MsgFilterLow, MsgFilterHigh);
+
+         /* The callout above may run a nested message loop that removes the
+            following message. Read the next link only after returning, while
+            CurrentMessage is still protected by bInPlay and remains linked. */
+         ListHead = CurrentMessage->ListEntry.Flink;
 
          if (!NotForUs && (MsgFilterLow != 0 || MsgFilterHigh != 0))
          {
@@ -2044,6 +2049,10 @@ co_MsqPeekHardwareMessage(IN PTHREADINFO pti,
             Ret = TRUE;
             break;
          }
+      }
+      else
+      {
+         ListHead = ListHead->Flink;
       }
    }
 
