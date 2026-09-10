@@ -554,6 +554,9 @@ co_IntUpdateWindows(PWND Wnd, ULONG Flags, BOOL Recurse)
          co_IntPaintWindows(Wnd, RDW_NOCHILDREN, FALSE);
       }
       UserDerefObjectCo(Wnd);
+
+      if (!IntIsWindow(hWnd))
+         return;
    }
 
    // Force flags as a toggle. Fixes msg:test_paint_messages:WmChildPaintNc.
@@ -567,32 +570,43 @@ co_IntUpdateWindows(PWND Wnd, ULONG Flags, BOOL Recurse)
         (Flags & RDW_ALLCHILDREN) &&
         !UserIsDesktopWindow(Wnd))
    {
-      PWND Child;
+      HWND *List, *phWnd;
 
-      for (Child = Wnd->spwndChild; Child; Child = Child->spwndNext)
+      if ((List = IntWinListChildren(Wnd)))
       {
-         /* transparent window, check for non-transparent sibling to paint first, then skip it */
-         if ( Child->ExStyle & WS_EX_TRANSPARENT &&
-             ( Child->hrgnUpdate != NULL || Child->state & WNDS_INTERNALPAINT ) )
+         for (phWnd = List; *phWnd; ++phWnd)
          {
-            PWND Next = Child->spwndNext;
-            while (Next)
-            {
-               if ( Next->hrgnUpdate != NULL || Next->state & WNDS_INTERNALPAINT ) break;
+            PWND Child;
 
-               Next = Next->spwndNext;
+            Child = UserGetWindowObject(*phWnd);
+            if (Child == NULL)
+               continue;
+
+            /* transparent window, check for non-transparent sibling to paint first, then skip it */
+            if ( Child->ExStyle & WS_EX_TRANSPARENT &&
+                ( Child->hrgnUpdate != NULL || Child->state & WNDS_INTERNALPAINT ) )
+            {
+               PWND Next = Child->spwndNext;
+               while (Next)
+               {
+                  if ( Next->hrgnUpdate != NULL || Next->state & WNDS_INTERNALPAINT ) break;
+
+                  Next = Next->spwndNext;
+               }
+
+               if (Next) continue;
             }
 
-            if (Next) continue;
+            if (Child->style & WS_VISIBLE)
+            {
+                USER_REFERENCE_ENTRY Ref;
+                UserRefObjectCo(Child, &Ref);
+                co_IntUpdateWindows(Child, Flags, TRUE);
+                UserDerefObjectCo(Child);
+            }
          }
 
-         if (Child->style & WS_VISIBLE)
-         {
-             USER_REFERENCE_ENTRY Ref;
-             UserRefObjectCo(Child, &Ref);
-             co_IntUpdateWindows(Child, Flags, TRUE);
-             UserDerefObjectCo(Child);
-         }
+         ExFreePoolWithTag(List, USERTAG_WINDOWLIST);
       }
    }
 }
@@ -1105,16 +1119,32 @@ UpdateThreadWindows(
    _In_opt_ HRGN hRgn,
    _In_ const RECTL *prcUpdate)
 {
+   HWND *List, *phWnd;
    PWND pwndTemp;
+   PWND Parent;
    RECTL Intersection;
 
-   for ( pwndTemp = pWnd;
-         pwndTemp;
-         pwndTemp = pwndTemp->spwndNext )
+   if (pWnd == NULL || pWnd->spwndParent == NULL)
+      return;
+
+   Parent = pWnd->spwndParent;
+   List = IntWinListChildren(Parent);
+   if (List == NULL)
+      return;
+
+   for (phWnd = List; *phWnd; ++phWnd)
    {
+      USER_REFERENCE_ENTRY Ref;
+
+      pwndTemp = UserGetWindowObject(*phWnd);
+      if (pwndTemp == NULL)
+         continue;
+
       if (!IntIsWindowDrawable(pwndTemp) ||
           !RECTL_bIntersectRect(&Intersection, &pwndTemp->rcWindow, prcUpdate))
          continue;
+
+      UserRefObjectCo(pwndTemp, &Ref);
 
       if (pwndTemp->head.pti == pti)
       {
@@ -1129,7 +1159,11 @@ UpdateThreadWindows(
           else
              UserUpdateWindows(pwndTemp, RDW_ALLCHILDREN);
       }
+
+      UserDerefObjectCo(pwndTemp);
    }
+
+   ExFreePoolWithTag(List, USERTAG_WINDOWLIST);
 }
 
 BOOL FASTCALL
