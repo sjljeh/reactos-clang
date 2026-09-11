@@ -4000,9 +4000,9 @@ co_IntSetWindowLongPtr(HWND hWnd, DWORD Index, LONG_PTR NewValue, BOOL Ansi, ULO
                OldValue = (LONG_PTR)co_UserSetParent(UserHMGetHandle(Window), (HWND)NewValue);
             break;
 
-         case GWLP_ID: // LONG
-            OldValue = (LONG) Window->IDMenu;
-            Window->IDMenu = (UINT) NewValue;
+         case GWLP_ID: // LONG or LONG_PTR
+            OldValue = (LONG_PTR)Window->IDMenu;
+            Window->IDMenu = (UINT_PTR)NewValue;
             break;
 
          case GWLP_USERDATA: // LONG or LONG_PTR
