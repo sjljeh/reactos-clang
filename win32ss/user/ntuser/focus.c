@@ -385,7 +385,8 @@ IntActivateWindow(PWND Wnd, PTHREADINFO pti, HANDLE tid, DWORD Type)
               {
                   UpdateShellHook(Wnd);
 
-                  co_WinPosSetWindowPos(Wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+                  co_WinPosSetWindowPos(Wnd, HWND_TOP, 0, 0, 0, 0,
+                                        SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
               }
           }
           else // Not the same, set the active Wnd.
@@ -409,7 +410,8 @@ IntActivateWindow(PWND Wnd, PTHREADINFO pti, HANDLE tid, DWORD Type)
 
            UpdateShellHook(Wnd);
 
-           co_WinPosSetWindowPos(Wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+           co_WinPosSetWindowPos(Wnd, HWND_TOP, 0, 0, 0, 0,
+                                 SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
 
            UserDerefObjectCo(Wnd);
       }
@@ -874,7 +876,10 @@ co_IntSetForegroundMessageQueue(
 
                  UpdateShellHook(Wnd);
 
-                 co_WinPosSetWindowPos(Wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+                 /* The window is already active. Do not recursively reactivate
+                  * it if the position callback changes foreground state. */
+                 co_WinPosSetWindowPos(Wnd, HWND_TOP, 0, 0, 0, 0,
+                                        SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
               }
               else
               {
