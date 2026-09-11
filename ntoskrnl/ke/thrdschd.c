@@ -89,25 +89,39 @@ KiFindIdealProcessor(
     KAFFINITY NodeMask;
     ULONG Processor;
 
+    /* Never select a processor that has not entered the active set. */
+    ProcessorSet &= KeActiveProcessors;
+    if (!ProcessorSet)
+    {
+        KeBugCheckEx(INVALID_AFFINITY_SET,
+                     OriginalIdealProcessor,
+                     KeActiveProcessors,
+                     0,
+                     0);
+    }
+
     /* Check if we can use the original ideal processor */
-    if (ProcessorSet & AFFINITY_MASK(OriginalIdealProcessor))
+    if ((OriginalIdealProcessor < MAXIMUM_PROCESSORS) &&
+        (ProcessorSet & AFFINITY_MASK(OriginalIdealProcessor)))
     {
         /* We can, so use it */
         return OriginalIdealProcessor;
     }
 
-    /* Only use active processors */
-    ProcessorSet &= KeActiveProcessors;
-
-    /* Get the original ideal PRCB */
-    OriginalIdealPrcb = KiProcessorBlock[OriginalIdealProcessor];
+    /* Get the original ideal PRCB, if that processor was initialized. */
+    OriginalIdealPrcb =
+        (OriginalIdealProcessor < MAXIMUM_PROCESSORS) ?
+        KiProcessorBlock[OriginalIdealProcessor] : NULL;
 
     /* Check if we can use the original node */
-    NodeMask = OriginalIdealPrcb->ParentNode->ProcessorMask & ProcessorSet;
-    if (NodeMask)
+    if (OriginalIdealPrcb && OriginalIdealPrcb->ParentNode)
     {
-        /* Use the node set instead */
-        ProcessorSet = NodeMask;
+        NodeMask = OriginalIdealPrcb->ParentNode->ProcessorMask & ProcessorSet;
+        if (NodeMask)
+        {
+            /* Use the node set instead */
+            ProcessorSet = NodeMask;
+        }
     }
 
     /* Calculate the ideal CPU from the affinity set */
@@ -123,8 +137,16 @@ KiSelectNextProcessor(
     KAFFINITY PreferredSet, IdleSet;
     ULONG Processor;
 
-    /* Start with the affinity */
-    PreferredSet = Thread->Affinity;
+    /* Start with the affinity, restricted to online processors. */
+    PreferredSet = Thread->Affinity & KeActiveProcessors;
+    if (!PreferredSet)
+    {
+        KeBugCheckEx(INVALID_AFFINITY_SET,
+                     (ULONG_PTR)Thread,
+                     Thread->Affinity,
+                     KeActiveProcessors,
+                     0);
+    }
 
     /* If we have matching idle processors, use them */
     IdleSet = PreferredSet & KiIdleSummary;
