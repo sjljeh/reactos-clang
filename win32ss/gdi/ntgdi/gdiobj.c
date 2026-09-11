@@ -154,8 +154,10 @@ static PPAGED_LOOKASIDE_LIST gpaLookasideList;
 /* The handle free-list generation is only 16 bits, so wrap cannot safely
  * distinguish an old lock-free snapshot after sustained handle churn. */
 static EX_PUSH_LOCK ghmgrFreeListLock;
-#if defined(CONFIG_SMP) && defined(_M_IX86)
-/* i386 lookaside S-lists have the same finite-generation ABA window. */
+#if defined(_M_IX86)
+/* win32k is shared by UP and MP kernels and is not built with CONFIG_SMP.
+ * Always serialize its i386 lookaside S-lists: their finite generation makes
+ * lock-free operation unsafe when this image runs on an MP kernel. */
 static EX_PUSH_LOCK gaLookasideLocks[GDIObjTypeTotal];
 #endif
 
@@ -251,7 +253,7 @@ static
 VOID
 InitLookasideList(UCHAR objt, ULONG cjSize)
 {
-#if defined(CONFIG_SMP) && defined(_M_IX86)
+#if defined(_M_IX86)
     ExInitializePushLock(&gaLookasideLocks[objt]);
 #endif
     ExInitializePagedLookasideList(&gpaLookasideList[objt],
@@ -570,12 +572,12 @@ GDIOBJ_AllocateObject(UCHAR objt, ULONG cjSize, FLONG fl)
     if (fl & BASEFLAG_LOOKASIDE)
     {
         /* Allocate the object from a lookaside list */
-#if defined(CONFIG_SMP) && defined(_M_IX86)
+#if defined(_M_IX86)
         KeEnterCriticalRegion();
         ExAcquirePushLockExclusive(&gaLookasideLocks[objt & 0x1f]);
 #endif
         pobj = ExAllocateFromPagedLookasideList(&gpaLookasideList[objt & 0x1f]);
-#if defined(CONFIG_SMP) && defined(_M_IX86)
+#if defined(_M_IX86)
         ExReleasePushLockExclusive(&gaLookasideLocks[objt & 0x1f]);
         KeLeaveCriticalRegion();
 #endif
@@ -629,12 +631,12 @@ GDIOBJ_vFreeObject(POBJ pobj)
         /* Check if the object is allocated from a lookaside list */
         if (pobj->BaseFlags & BASEFLAG_LOOKASIDE)
         {
-#if defined(CONFIG_SMP) && defined(_M_IX86)
+#if defined(_M_IX86)
             KeEnterCriticalRegion();
             ExAcquirePushLockExclusive(&gaLookasideLocks[objt]);
 #endif
             ExFreeToPagedLookasideList(&gpaLookasideList[objt], pobj);
-#if defined(CONFIG_SMP) && defined(_M_IX86)
+#if defined(_M_IX86)
             ExReleasePushLockExclusive(&gaLookasideLocks[objt]);
             KeLeaveCriticalRegion();
 #endif
