@@ -344,7 +344,9 @@ KiTryBalanceReadyQueuePair(
     RequestInterrupt = FALSE;
     SourceLoad = KiQueryProcessorLoad(SourcePrcb);
     TargetLoad = KiQueryProcessorLoad(TargetPrcb);
-    if (SourceLoad <= TargetLoad) goto Exit;
+    /* Moving one runnable thread must reduce, rather than reverse, imbalance. */
+    if ((SourceLoad <= TargetLoad) || ((SourceLoad - TargetLoad) <= 1))
+        goto Exit;
 
     /*
      * Do not displace an already selected thread.  A candidate no stronger
@@ -471,7 +473,8 @@ KiBalanceReadyQueues(VOID)
             }
 
             if ((TargetProcessor == MAXULONG) ||
-                (HighestLoad <= LowestLoad))
+                (HighestLoad <= LowestLoad) ||
+                ((HighestLoad - LowestLoad) <= 1))
             {
                 break;
             }
