@@ -650,19 +650,19 @@ IntGetWndProc(PWND pWnd, BOOL Ansi)
 }
 
 static ULONG_PTR FASTCALL
-IntGetClassLongA(PWND Wnd, PCLS Class, int nIndex)
+IntGetClassLongA(PWND Wnd, PCLS Class, int nIndex, UINT Size)
 {
     ULONG_PTR Ret = 0;
 
     if (nIndex >= 0)
     {
-        if (nIndex + sizeof(ULONG_PTR) < nIndex ||
-            nIndex + sizeof(ULONG_PTR) > Class->cbclsExtra)
+        if (nIndex + Size < nIndex ||
+            nIndex + Size > Class->cbclsExtra)
         {
             SetLastError(ERROR_INVALID_PARAMETER);
         }
         else
-            Ret = *(PULONG_PTR)((ULONG_PTR)(Class + 1) + nIndex);
+            memcpy(&Ret, (PCHAR)(Class + 1) + nIndex, Size);
     }
     else
     {
@@ -725,19 +725,19 @@ IntGetClassLongA(PWND Wnd, PCLS Class, int nIndex)
 }
 
 static ULONG_PTR FASTCALL
-IntGetClassLongW(PWND Wnd, PCLS Class, int nIndex)
+IntGetClassLongW(PWND Wnd, PCLS Class, int nIndex, UINT Size)
 {
     ULONG_PTR Ret = 0;
 
     if (nIndex >= 0)
     {
-        if (nIndex + sizeof(ULONG_PTR) < nIndex ||
-            nIndex + sizeof(ULONG_PTR) > Class->cbclsExtra)
+        if (nIndex + Size < nIndex ||
+            nIndex + Size > Class->cbclsExtra)
         {
             SetLastError(ERROR_INVALID_PARAMETER);
         }
         else
-            Ret = *(PULONG_PTR)((ULONG_PTR)(Class + 1) + nIndex);
+            memcpy(&Ret, (PCHAR)(Class + 1) + nIndex, Size);
     }
     else
     {
@@ -833,11 +833,11 @@ GetClassLongA(HWND hWnd, int nIndex)
                     break;
 
                 default:
-                    Ret = IntGetClassLongA(Wnd, Class, nIndex);
+                    Ret = IntGetClassLongA(Wnd, Class, nIndex, sizeof(DWORD));
                     break;
             }
 #else
-            Ret = IntGetClassLongA(Wnd, Class, nIndex);
+            Ret = IntGetClassLongA(Wnd, Class, nIndex, sizeof(DWORD));
 #endif
         }
         else
@@ -889,11 +889,11 @@ GetClassLongW(HWND hWnd, int nIndex)
                     break;
 
                 default:
-                    Ret = IntGetClassLongW(Wnd, Class, nIndex);
+                    Ret = IntGetClassLongW(Wnd, Class, nIndex, sizeof(DWORD));
                     break;
             }
 #else
-            Ret = IntGetClassLongW(Wnd, Class, nIndex);
+            Ret = IntGetClassLongW(Wnd, Class, nIndex, sizeof(DWORD));
 #endif
         }
         else
@@ -934,7 +934,7 @@ GetClassLongPtrA(HWND hWnd,
         Class = DesktopPtrToUser(Wnd->pcls);
         if (Class != NULL)
         {
-            Ret = IntGetClassLongA(Wnd, Class, nIndex);
+            Ret = IntGetClassLongA(Wnd, Class, nIndex, sizeof(ULONG_PTR));
         }
         else
         {
@@ -973,7 +973,7 @@ GetClassLongPtrW(HWND hWnd,
         Class = DesktopPtrToUser(Wnd->pcls);
         if (Class != NULL)
         {
-            Ret = IntGetClassLongW(Wnd, Class, nIndex);
+            Ret = IntGetClassLongW(Wnd, Class, nIndex, sizeof(ULONG_PTR));
         }
         else
         {
