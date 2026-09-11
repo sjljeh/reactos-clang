@@ -13,11 +13,15 @@
 #define NDEBUG
 #include <debug.h>
 
+#define AP_STARTUP_POLL_US             10
+#define AP_STARTUP_TIMEOUT_ITERATIONS  500000
+
 typedef struct _APINFO
 {
     DECLSPEC_ALIGN(PAGE_SIZE) KIDTENTRY Idt[256];
     DECLSPEC_ALIGN(PAGE_SIZE) KGDTENTRY Gdt[128];
-    DECLSPEC_ALIGN(16) UINT8 NMIStackData[DOUBLE_FAULT_STACK_SIZE];
+    DECLSPEC_ALIGN(PAGE_SIZE) UINT8 DoubleFaultStackData[DOUBLE_FAULT_STACK_SIZE];
+    DECLSPEC_ALIGN(PAGE_SIZE) UINT8 NMIStackData[DOUBLE_FAULT_STACK_SIZE];
     KIPCR Pcr;
     ETHREAD Thread;
     KTSS Tss;
@@ -40,13 +44,13 @@ KiInitializeExceptionTss(
     _Out_ PKTSS Tss,
     _Inout_ PKGDTENTRY TssEntry,
     _In_ ULONG_PTR ExceptionStack,
-    _In_ PVOID ExceptionHandler)
+    _In_ VOID (__cdecl *ExceptionHandler)(VOID))
 {
     KiInitializeTSS(Tss);
     Tss->CR3 = __readcr3();
     Tss->Esp0 = ExceptionStack;
     Tss->Esp = ExceptionStack;
-    Tss->Eip = PtrToUlong(ExceptionHandler);
+    Tss->Eip = (ULONG)(ULONG_PTR)ExceptionHandler;
     Tss->Cs = KGDT_R0_CODE;
     Tss->Fs = KGDT_R0_PCR;
     Tss->Ss = KGDT_R0_DATA;
@@ -72,6 +76,7 @@ KeStartAllProcessors(VOID)
     ULONG_PTR ExceptionStack;
     ULONG ProcessorCount;
     ULONG MaximumProcessors;
+    ULONG WaitIterations;
 
     /* NOTE: NT6+ HAL exports HalEnumerateProcessors() and
      * HalQueryMaximumProcessorCount() that help determining
@@ -135,14 +140,17 @@ KeStartAllProcessors(VOID)
         TssEntry->HighWord.Bits.Dpl = 0;
         KiInitializeTSS2(&APInfo->Tss, TssEntry);
         KiInitializeTSS(&APInfo->Tss);
+        APInfo->Tss.Esp0 = (ULONG_PTR)KernelStack;
 
         /* Give the task-gate handlers valid per-processor TSS state. */
-        ExceptionStack = (ULONG_PTR)&APInfo->NMIStackData[
-            RTL_NUMBER_OF(APInfo->NMIStackData)];
+        ExceptionStack = (ULONG_PTR)&APInfo->DoubleFaultStackData[
+            RTL_NUMBER_OF(APInfo->DoubleFaultStackData)];
         KiInitializeExceptionTss(&APInfo->TssDoubleFault,
                                  KiGetGdtEntry(&APInfo->Gdt, KGDT_DF_TSS),
                                  ExceptionStack,
                                  KiTrap08);
+        ExceptionStack = (ULONG_PTR)&APInfo->NMIStackData[
+            RTL_NUMBER_OF(APInfo->NMIStackData)];
         KiInitializeExceptionTss(&APInfo->TssNMI,
                                  KiGetGdtEntry(&APInfo->Gdt, KGDT_NMI_TSS),
                                  ExceptionStack,
@@ -171,7 +179,10 @@ KeStartAllProcessors(VOID)
 
         ProcessorState->ContextFrame.Esp = (ULONG_PTR)KernelStack;
         ProcessorState->ContextFrame.Eip = (ULONG_PTR)KiSystemStartup;
-        ProcessorState->ContextFrame.EFlags = __readeflags() & ~EFLAGS_INTERRUPT_MASK;
+        ProcessorState->ContextFrame.EFlags = __readeflags() &
+            ~(EFLAGS_INTERRUPT_MASK | EFLAGS_TF | EFLAGS_DF |
+              EFLAGS_NESTED_TASK | EFLAGS_RF | EFLAGS_V86_MASK |
+              EFLAGS_ALIGN_CHECK | EFLAGS_VIF | EFLAGS_VIP);
 
         ProcessorState->ContextFrame.Esp = (ULONG)((ULONG_PTR)ProcessorState->ContextFrame.Esp - sizeof(AP_SETUP_STACK));
         PAP_SETUP_STACK ApStack = (PAP_SETUP_STACK)ProcessorState->ContextFrame.Esp;
@@ -180,22 +191,37 @@ KeStartAllProcessors(VOID)
 
         // Update the LOADER_PARAMETER_BLOCK structure for the new processor
         KeLoaderBlock->KernelStack = (ULONG_PTR)KernelStack;
-        KeLoaderBlock->Prcb = (ULONG_PTR)APInfo->Pcr.Prcb;
         KeLoaderBlock->Thread = (ULONG_PTR)&APInfo->Thread;
+        InterlockedExchangePointer((PVOID volatile *)&KeLoaderBlock->Prcb,
+                                   APInfo->Pcr.Prcb);
 
         // Start the CPU
         DPRINT("Attempting to Start a CPU with number: %lu\n", ProcessorCount);
         if (!HalStartNextProcessor(KeLoaderBlock, ProcessorState))
         {
+            InterlockedExchangePointer((PVOID volatile *)&KeLoaderBlock->Prcb,
+                                       NULL);
+            KeLoaderBlock->Thread = 0;
+            KeLoaderBlock->KernelStack = 0;
+            KiProcessorBlock[ProcessorCount] = NULL;
             break;
         }
 
         // And wait for it to start
-        while (KeLoaderBlock->Prcb != 0)
+        WaitIterations = AP_STARTUP_TIMEOUT_ITERATIONS;
+        while (ReadULongPtrAcquire(&KeLoaderBlock->Prcb) != 0)
         {
-            //TODO: Add a time out so we don't wait forever
-            KeMemoryBarrier();
-            YieldProcessor();
+            if (--WaitIterations == 0)
+            {
+                /* A late AP may still own its startup state; fail safely. */
+                KeBugCheckEx(MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED,
+                             ProcessorCount,
+                             (ULONG_PTR)APInfo->Pcr.Prcb,
+                             0,
+                             0);
+            }
+
+            KeStallExecutionProcessor(AP_STARTUP_POLL_US);
         }
 
         /* The new processor now owns its PCR, idle thread and stacks. */

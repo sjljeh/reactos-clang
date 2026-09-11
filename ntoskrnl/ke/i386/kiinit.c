@@ -274,8 +274,6 @@ KiInitMachineDependent(VOID)
         DPRINT1("ISR Time Limit not yet supported\n");
     }
 
-    /* Set CR0 features based on detected CPU */
-    KiSetCR0Bits();
 }
 
 CODE_SEG("INIT")
@@ -537,7 +535,8 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
     }
     else
     {
-        /* FIXME */
+        /* Match the BSP's initialization IRQL before common setup. */
+        KeLowerIrql(APC_LEVEL);
         DPRINT1("Starting CPU#%u - you are brave\n", Number);
     }
 
@@ -639,9 +638,18 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
         InterlockedOr((PLONG)&KiIdleSummary, (LONG)Prcb->SetMember);
     KiReleasePrcbLock(Prcb);
 
+    /* Publish a fully initialized AP before acknowledging its startup. */
+    if (Number != 0)
+    {
+        ASSERT(KeNumberProcessors == Number);
+        KeNumberProcessors = Number + 1;
+        KeMemoryBarrier();
+        InterlockedOr((PLONG)&KeActiveProcessors, (LONG)Prcb->SetMember);
+    }
+
     /* Raise back to HIGH_LEVEL and clear the PRCB for the loader block */
     KeRaiseIrql(HIGH_LEVEL, &DummyIrql);
-    LoaderBlock->Prcb = 0;
+    InterlockedExchangePointer((PVOID volatile *)&LoaderBlock->Prcb, NULL);
 }
 
 CODE_SEG("INIT")
@@ -691,23 +699,26 @@ VOID
 NTAPI
 KiSystemStartupBootStack(VOID)
 {
+    PKPRCB Prcb;
     PKTHREAD Thread;
+
+    Prcb = (PKPRCB)__readfsdword(KPCR_PRCB);
 
     /* Initialize the kernel for the current CPU */
     KiInitializeKernel(&KiInitialProcess.Pcb,
                        (PKTHREAD)KeLoaderBlock->Thread,
                        (PVOID)(KeLoaderBlock->KernelStack & ~3),
-                       (PKPRCB)__readfsdword(KPCR_PRCB),
-                       KeNumberProcessors - 1,
+                       Prcb,
+                       Prcb->Number,
                        KeLoaderBlock);
 
     /* Set the priority of this thread to 0 */
     Thread = KeGetCurrentThread();
     Thread->Priority = 0;
 
-    /* Force interrupts enabled and lower IRQL back to DISPATCH_LEVEL */
-    _enable();
+    /* Lower the APIC mask before allowing interrupt delivery. */
     KeLowerIrql(DISPATCH_LEVEL);
+    _enable();
 
     /* Set the right wait IRQL */
     Thread->WaitIrql = DISPATCH_LEVEL;
@@ -846,14 +857,22 @@ AppCpuInit:
     __writefsdword(KPCR_PRCB_SET_MEMBER, 1 << Cpu);
 
     KiVerifyCpuFeatures(Pcr->Prcb);
+    KiSetCR0Bits();
+
+    /* Exception handlers need a valid process before the idle thread setup. */
+    if (Cpu)
+        InitialThread->ApcState.Process = &KiInitialProcess.Pcb;
 
     /* Initialize the Processor with HAL */
     HalInitializeProcessor(Cpu, KeLoaderBlock);
 
-    /* Set active processors */
-    InterlockedOr((PLONG)&KeActiveProcessors,
-                  (LONG)__readfsdword(KPCR_SET_MEMBER));
-    KeNumberProcessors++;
+    /* The BSP is active during global initialization; APs publish later. */
+    if (!Cpu)
+    {
+        InterlockedOr((PLONG)&KeActiveProcessors,
+                      (LONG)__readfsdword(KPCR_SET_MEMBER));
+        KeNumberProcessors = 1;
+    }
 
     /* Allow the next processor to perform its serialized initialization. */
     InterlockedExchange((PLONG)&KiFreezeExecutionLock, 0);
