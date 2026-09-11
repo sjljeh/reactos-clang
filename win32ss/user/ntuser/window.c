@@ -4002,7 +4002,7 @@ co_IntSetWindowLongPtr(HWND hWnd, DWORD Index, LONG_PTR NewValue, BOOL Ansi, ULO
 
          case GWLP_ID: // LONG or LONG_PTR
             OldValue = (LONG_PTR)Window->IDMenu;
-            Window->IDMenu = (UINT_PTR)NewValue;
+            Window->IDMenu = (Size == sizeof(LONG)) ? (UINT)NewValue : (UINT_PTR)NewValue;
             break;
 
          case GWLP_USERDATA: // LONG or LONG_PTR
