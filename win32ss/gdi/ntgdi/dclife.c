@@ -630,10 +630,16 @@ DC_vLockDrawTiles(
     {
         for (Column = FirstColumn; Column <= LastColumn; Column++)
         {
-            if ((bWrite && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockWrite)) ||
-                (bRead && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockRead)))
+            if (bWrite &&
+                DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockWrite))
             {
                 ExAcquirePushLockExclusive(
+                    &ppdev->pDrawLocks[Row * ppdev->cDrawLockColumns + Column]);
+            }
+            else if (bRead &&
+                     DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockRead))
+            {
+                ExAcquirePushLockShared(
                     &ppdev->pDrawLocks[Row * ppdev->cDrawLockColumns + Column]);
             }
         }
@@ -681,10 +687,16 @@ DC_vUnlockDrawTiles(
         Column = LastColumn;
         for (;;)
         {
-            if ((bWrite && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockWrite)) ||
-                (bRead && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockRead)))
+            if (bWrite &&
+                DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockWrite))
             {
                 ExReleasePushLockExclusive(
+                    &ppdev->pDrawLocks[Row * ppdev->cDrawLockColumns + Column]);
+            }
+            else if (bRead &&
+                     DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockRead))
+            {
+                ExReleasePushLockShared(
                     &ppdev->pDrawLocks[Row * ppdev->cDrawLockColumns + Column]);
             }
             if (Column == FirstColumn)
