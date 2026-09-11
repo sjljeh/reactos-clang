@@ -159,7 +159,7 @@ SetSysColorsTemp(const COLORREF *pPens,
         /* allocate our structure to remember old colors */
         LPVOID pOldCol = HeapAlloc(GetProcessHeap(), 0, sizeof(DWORD)+n*sizeof(HPEN)+n*sizeof(HBRUSH));
         LPVOID p = pOldCol;
-        *(DWORD_PTR *)p = n; p = (char*)p + sizeof(DWORD);
+        *(DWORD *)p = (DWORD)n; p = (char*)p + sizeof(DWORD);
         memcpy(p, SysColorPens, n*sizeof(HPEN)); p = (char*)p + n*sizeof(HPEN);
         memcpy(p, SysColorBrushes, n*sizeof(HBRUSH)); p = (char*)p + n*sizeof(HBRUSH);
 
