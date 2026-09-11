@@ -94,6 +94,9 @@ typedef struct DECLSPEC_CACHEALIGN _KI_SCHEDULER_CPU_DATA
     volatile ULONG PreemptCurrent;
     volatile ULONG PreemptLast;
     volatile ULONG SwitchToIdle;
+    volatile ULONG DispatcherLockAcquires;
+    volatile ULONG DispatcherLockContentions;
+    volatile ULONG DispatcherLockHandoffs;
 } KI_SCHEDULER_CPU_DATA, *PKI_SCHEDULER_CPU_DATA;
 
 C_ASSERT((sizeof(KI_SCHEDULER_CPU_DATA) % SYSTEM_CACHE_ALIGNMENT_SIZE) == 0);
@@ -181,6 +184,20 @@ extern PGDI_BATCHFLUSH_ROUTINE KeGdiFlushUserBatch;
 extern ULONGLONG BootCycles, BootCyclesEnd;
 extern ULONG ProcessCount;
 extern VOID __cdecl KiInterruptTemplate(VOID);
+
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+VOID
+FASTCALL
+KiAcquireDispatcherLockQueue(
+    _In_ PKPRCB Prcb
+);
+
+VOID
+FASTCALL
+KiReleaseDispatcherLockQueue(
+    _In_ PKPRCB Prcb
+);
+#endif
 
 /* MACROS *************************************************************************/
 

@@ -17,6 +17,89 @@
 
 /* PRIVATE FUNCTIONS *********************************************************/
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+VOID
+FASTCALL
+KiAcquireDispatcherLockQueue(
+    _In_ PKPRCB Prcb)
+{
+    PKSPIN_LOCK SharedLock;
+    PKSPIN_LOCK_QUEUE LockQueue, Previous;
+
+    ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
+    LockQueue = &Prcb->LockQueue[LockQueueDispatcherLock];
+    SharedLock = LockQueue->Lock;
+    ASSERT(((ULONG_PTR)SharedLock & 1) == 0);
+
+    /*
+     * The shared lock stores the queue tail.  The low bit of each private
+     * queue node's Lock pointer is its local wait flag, so contenders spin on
+     * separate cache lines instead of repeatedly invalidating the shared lock.
+     */
+    LockQueue->Next = NULL;
+    LockQueue->Lock = (PKSPIN_LOCK)((ULONG_PTR)SharedLock | 1);
+    Previous = (PKSPIN_LOCK_QUEUE)
+        InterlockedExchangePointer((PVOID volatile *)SharedLock, LockQueue);
+
+    KiSchedulerCpuData[Prcb->Number].DispatcherLockAcquires++;
+    if (!Previous)
+    {
+        LockQueue->Lock = SharedLock;
+        return;
+    }
+
+    KiSchedulerCpuData[Prcb->Number].DispatcherLockContentions++;
+    InterlockedExchangePointer((PVOID volatile *)&Previous->Next, LockQueue);
+    while ((ULONG_PTR)LockQueue->Lock & 1)
+    {
+        YieldProcessor();
+        KeMemoryBarrierWithoutFence();
+    }
+
+    KeMemoryBarrier();
+}
+
+VOID
+FASTCALL
+KiReleaseDispatcherLockQueue(
+    _In_ PKPRCB Prcb)
+{
+    PKSPIN_LOCK SharedLock;
+    PKSPIN_LOCK_QUEUE LockQueue, Successor;
+
+    ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
+    LockQueue = &Prcb->LockQueue[LockQueueDispatcherLock];
+    SharedLock = LockQueue->Lock;
+    ASSERT(((ULONG_PTR)SharedLock & 1) == 0);
+
+    Successor = LockQueue->Next;
+    if (!Successor)
+    {
+        /* Drop an uncontended tail, or wait for an enqueuer to link itself. */
+        if (InterlockedCompareExchangePointer((PVOID volatile *)SharedLock,
+                                              NULL,
+                                              LockQueue) == LockQueue)
+        {
+            LockQueue->Next = NULL;
+            LockQueue->Lock = SharedLock;
+            return;
+        }
+
+        do
+        {
+            YieldProcessor();
+            KeMemoryBarrierWithoutFence();
+            Successor = LockQueue->Next;
+        } while (!Successor);
+    }
+
+    KiSchedulerCpuData[Prcb->Number].DispatcherLockHandoffs++;
+    InterlockedAnd((PLONG)&Successor->Lock, ~1L);
+    LockQueue->Next = NULL;
+    LockQueue->Lock = SharedLock;
+}
+#endif
+
 #if 0
 //
 // FIXME: The queued spinlock routines are broken.

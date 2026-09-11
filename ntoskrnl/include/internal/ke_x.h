@@ -348,17 +348,29 @@ FORCEINLINE
 KIRQL
 KiAcquireDispatcherLock(VOID)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    KIRQL OldIrql;
+
+    OldIrql = KeRaiseIrqlToSynchLevel();
+    KiAcquireDispatcherLockQueue(KeGetCurrentPrcb());
+    return OldIrql;
+#else
     /* Raise to synchronization level and acquire the dispatcher lock */
     return KeAcquireQueuedSpinLockRaiseToSynch(LockQueueDispatcherLock);
+#endif
 }
 
 FORCEINLINE
 VOID
 KiReleaseDispatcherLock(IN KIRQL OldIrql)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    KiReleaseDispatcherLockQueue(KeGetCurrentPrcb());
+#else
     /* First release the lock */
     KeReleaseQueuedSpinLockFromDpcLevel(&KeGetCurrentPrcb()->
                                         LockQueue[LockQueueDispatcherLock]);
+#endif
 
     /* Then exit the dispatcher */
     KiExitDispatcher(OldIrql);
@@ -368,19 +380,28 @@ FORCEINLINE
 VOID
 KiAcquireDispatcherLockAtSynchLevel(VOID)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
+    KiAcquireDispatcherLockQueue(KeGetCurrentPrcb());
+#else
     /* Acquire the dispatcher lock */
     ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
     KeAcquireQueuedSpinLockAtDpcLevel(&KeGetCurrentPrcb()->
                                       LockQueue[LockQueueDispatcherLock]);
+#endif
 }
 
 FORCEINLINE
 VOID
 KiReleaseDispatcherLockFromSynchLevel(VOID)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    KiReleaseDispatcherLockQueue(KeGetCurrentPrcb());
+#else
     /* Release the dispatcher lock */
     KeReleaseQueuedSpinLockFromDpcLevel(&KeGetCurrentPrcb()->
                                         LockQueue[LockQueueDispatcherLock]);
+#endif
 }
 
 //
