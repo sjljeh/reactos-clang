@@ -407,7 +407,7 @@ static INT_PTR CALLBACK MessageBoxProc(
         mbd = (PMSGBOXDATA)GetPropW(hwnd, L"ROS_MSGBOX");
         if (!mbd)
             return FALSE;
-        phi->dwContextId = GetWindowContextHelpId(hwnd);
+        phi->dwContextId = mbd->mbp.dwContextHelpId;
 
         if (mbd->mbp.lpfnMsgBoxCallback)
         {
