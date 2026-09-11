@@ -65,6 +65,10 @@ HalpSetupTemporaryMappings(
     /* Copy current mappings */
     RtlCopyMemory(RootPageTable, MiAddressToPde(NULL), PAGE_SIZE);
 
+    /* The identity-map page table is rebuilt for every AP. */
+    RtlZeroMemory(LowMapPde, PAGE_SIZE);
+    RtlZeroMemory(&RootPageTable[0], sizeof(RootPageTable[0]));
+
     /* Set up low PDE */
     PhysicalAddress = MmGetPhysicalAddress(LowMapPde);
     RootPageTable[0].u.Hard.PageFrameNumber = PhysicalAddress.QuadPart >> PAGE_SHIFT;
@@ -73,7 +77,7 @@ HalpSetupTemporaryMappings(
 
     /* Copy low stub PTEs */
     StartPti = MiAddressToPteOffset(HalpLowStubPhysicalAddress.QuadPart);
-    ASSERT(StartPti + HALP_LOW_STUB_SIZE_IN_PAGES < 1024);
+    ASSERT(StartPti + HALP_LOW_STUB_SIZE_IN_PAGES <= 1024);
     for (ULONG i = 0; i < HALP_LOW_STUB_SIZE_IN_PAGES; i++)
     {
         LowMapPde[StartPti + i] = LowStubPte[i];
@@ -90,12 +94,28 @@ HalStartNextProcessor(
     _In_ PLOADER_PARAMETER_BLOCK LoaderBlock,
     _In_ PKPROCESSOR_STATE ProcessorState)
 {
+    PKPRCB TargetPrcb;
+    ULONG ProcessorNumber;
+
     /* Bail out if we only use the boot CPU */
     if (HalpOnlyBootProcessor)
         return FALSE;
 
     /* Bail out if we have started all available CPUs */
-    if (HalpStartedProcessorCount == HalpApicInfoTable.ProcessorCount)
+    if ((HalpLowStub == NULL) ||
+        (HalpLowStubPhysicalAddress.QuadPart == 0) ||
+        (HalpStartedProcessorCount >= HalpApicInfoTable.ProcessorCount))
+        return FALSE;
+
+    if ((LoaderBlock == NULL) || (ProcessorState == NULL))
+        return FALSE;
+
+    TargetPrcb = (PKPRCB)LoaderBlock->Prcb;
+    if (TargetPrcb == NULL)
+        return FALSE;
+
+    ProcessorNumber = TargetPrcb->Number;
+    if (ProcessorNumber != HalpStartedProcessorCount)
         return FALSE;
 
     // Initalize the temporary page table
@@ -120,7 +140,7 @@ HalStartNextProcessor(
         .Idtr = ProcessorState->SpecialRegisters.Idtr,
     };
 
-    ApicStartApplicationProcessor(HalpStartedProcessorCount, HalpLowStubPhysicalAddress);
+    ApicStartApplicationProcessor(ProcessorNumber, HalpLowStubPhysicalAddress);
 
     HalpStartedProcessorCount++;
 

@@ -64,12 +64,6 @@ HalpRequestIpi(
 
 VOID
 NTAPI
-HalpBroadcastIpiSpecifyVector(
-    _In_ UCHAR Vector,
-    _In_ BOOLEAN IncludeSelf);
-
-VOID
-NTAPI
 HalRequestIpiSpecifyVector(
     _In_ KAFFINITY TargetSet,
     _In_ UCHAR Vector);

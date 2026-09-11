@@ -15,10 +15,31 @@
 #define NDEBUG
 #include <debug.h>
 
+#define APIC_ICR_DELIVERY_TIMEOUT 1000000
 
 extern PPROCESSOR_IDENTITY HalpProcessorIdentity;
+extern HALP_APIC_INFO_TABLE HalpApicInfoTable;
 
 /* INTERNAL FUNCTIONS *********************************************************/
+
+static
+BOOLEAN
+ApicWaitForIcrIdle(VOID)
+{
+    ULONG Retry;
+    APIC_INTERRUPT_COMMAND_REGISTER Icr;
+
+    for (Retry = 0; Retry < APIC_ICR_DELIVERY_TIMEOUT; Retry++)
+    {
+        Icr.Long0 = ApicRead(APIC_ICR0);
+        if (!Icr.DeliveryStatus)
+            return TRUE;
+
+        YieldProcessor();
+    }
+
+    return FALSE;
+}
 
 /*!
     \param Vector - Specifies the interrupt vector to be delivered.
@@ -74,11 +95,9 @@ ApicRequestGlobalInterrupt(
     Flags = __readeflags();
     _disable();
 
-    /* Wait for the APIC to be idle */
-    do
-    {
-        Icr.Long0 = ApicRead(APIC_ICR0);
-    } while (Icr.DeliveryStatus);
+    /* Wait for the previous command to leave the local APIC. */
+    if (!ApicWaitForIcrIdle())
+        goto DeliveryFailure;
 
     /* Setup the command register */
     Icr.LongLong = 0;
@@ -97,11 +116,25 @@ ApicRequestGlobalInterrupt(
     ApicWrite(APIC_ICR1, Icr.Long1);
     ApicWrite(APIC_ICR0, Icr.Long0);
 
+    if (!ApicWaitForIcrIdle())
+        goto DeliveryFailure;
+
     /* Finally, restore the original interrupt state */
     if (Flags & EFLAGS_INTERRUPT_MASK)
     {
         _enable();
     }
+    return;
+
+DeliveryFailure:
+    if (Flags & EFLAGS_INTERRUPT_MASK)
+        _enable();
+
+    KeBugCheckEx(HAL_INITIALIZATION_FAILED,
+                 DestinationProcessor,
+                 Vector,
+                 MessageType,
+                 TriggerMode);
 }
 
 
@@ -133,29 +166,6 @@ ApicStartApplicationProcessor(
 /* HAL IPI FUNCTIONS **********************************************************/
 
 /*!
- *  \brief Broadcasts an IPI with a specified vector to all processors.
- *
- *  \param Vector - Specifies the interrupt vector to be delivered.
- *  \param IncludeSelf - Specifies whether to include the current processor.
- */
-VOID
-NTAPI
-HalpBroadcastIpiSpecifyVector(
-    _In_ UCHAR Vector,
-    _In_ BOOLEAN IncludeSelf)
-{
-    APIC_DSH DestinationShortHand = IncludeSelf ?
-        APIC_DSH_AllIncludingSelf : APIC_DSH_AllExcludingSelf;
-
-    /* Request the interrupt targeted at all processors */
-    ApicRequestGlobalInterrupt(0, // Ignored
-                               Vector,
-                               APIC_MT_Fixed,
-                               APIC_TGM_Edge,
-                               DestinationShortHand);
-}
-
-/*!
  *  \brief Requests an IPI with a specified vector on the specified processors.
  *
  *  \param TargetSet - Specifies the set of processors to send the IPI to.
@@ -177,32 +187,17 @@ HalRequestIpiSpecifyVector(
     /* Sanitize the target set */
     TargetSet &= ActiveProcessors;
 
-    /* An empty set must not match the all-excluding-self shorthand. */
+    /* Nothing to deliver after applying the online processor mask. */
     if (TargetSet == 0)
         return;
-
-    /* Check if all processors are requested */
-    if (TargetSet == ActiveProcessors)
-    {
-        /* Send an IPI to all processors, including this processor */
-        HalpBroadcastIpiSpecifyVector(Vector, TRUE);
-        return;
-    }
-
-    /* Check if all processors except the current one are requested */
-    if (TargetSet == (ActiveProcessors & ~KeGetCurrentPrcb()->SetMember))
-    {
-        /* Send an IPI to all processors, excluding this processor */
-        HalpBroadcastIpiSpecifyVector(Vector, FALSE);
-        return;
-    }
 
     /* Loop while we have more processors */
     RemainingSet = TargetSet;
     while (RemainingSet != 0)
     {
         NT_VERIFY(BitScanForwardAffinity(&ProcessorIndex, RemainingSet) != 0);
-        ASSERT(ProcessorIndex < KeNumberProcessors);
+        ASSERT(ProcessorIndex < HalpApicInfoTable.ProcessorCount);
+        ASSERT(HalpProcessorIdentity[ProcessorIndex].ProcessorStarted);
         SetMember = AFFINITY_MASK(ProcessorIndex);
         RemainingSet &= ~SetMember;
 
@@ -287,7 +282,8 @@ HalpSendNMI(
     while (RemainingSet != 0)
     {
         NT_VERIFY(BitScanForwardAffinity(&ProcessorIndex, RemainingSet) != 0);
-        ASSERT(ProcessorIndex < KeNumberProcessors);
+        ASSERT(ProcessorIndex < HalpApicInfoTable.ProcessorCount);
+        ASSERT(HalpProcessorIdentity[ProcessorIndex].ProcessorStarted);
         SetMember = AFFINITY_MASK(ProcessorIndex);
         RemainingSet &= ~SetMember;
 
