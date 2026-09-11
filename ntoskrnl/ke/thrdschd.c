@@ -15,9 +15,13 @@
 #ifdef _WIN64
 # define InterlockedOrSetMember(Destination, SetMember) \
     InterlockedOr64((PLONG64)Destination, SetMember);
+# define InterlockedAndSetMember(Destination, SetMember) \
+    InterlockedAnd64((PLONG64)Destination, SetMember);
 #else
 # define InterlockedOrSetMember(Destination, SetMember) \
     InterlockedOr((PLONG)Destination, SetMember);
+# define InterlockedAndSetMember(Destination, SetMember) \
+    InterlockedAnd((PLONG)Destination, SetMember);
 #endif
 
 /* GLOBALS *******************************************************************/
@@ -338,6 +342,10 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
             /* Put this one as the next one */
             Thread->State = Standby;
             Prcb->NextThread = Thread;
+#ifdef CONFIG_SMP
+            InterlockedAndSetMember(&KiIdleSummary, ~Prcb->SetMember);
+            Prcb->IdleSchedule = FALSE;
+#endif
 
             /* Set it in deferred ready mode */
             NextThread->State = DeferredReady;
@@ -359,6 +367,10 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
             /* Set the thread on standby and as the next thread */
             Thread->State = Standby;
             Prcb->NextThread = Thread;
+#ifdef CONFIG_SMP
+            InterlockedAndSetMember(&KiIdleSummary, ~Prcb->SetMember);
+            Prcb->IdleSchedule = FALSE;
+#endif
 
             /* Release the lock */
             KiReleasePrcbLock(Prcb);

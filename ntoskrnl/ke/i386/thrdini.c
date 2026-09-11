@@ -301,6 +301,12 @@ KiIdleLoop(VOID)
             NewThread->State = Running;
 
 #ifdef CONFIG_SMP
+            /* This processor has accepted runnable work. */
+            InterlockedBitTestAndResetAffinity(&KiIdleSummary, Prcb->Number);
+            Prcb->IdleSchedule = FALSE;
+#endif
+
+#ifdef CONFIG_SMP
             /* Do the swap at SYNCH_LEVEL */
             KfRaiseIrql(SYNCH_LEVEL);
 #endif
@@ -518,6 +524,12 @@ KiDispatchInterrupt(VOID)
         /* The thread is now running */
         NewThread->State = Running;
         OldThread->WaitReason = WrDispatchInt;
+
+#ifdef CONFIG_SMP
+        /* Do not advertise a processor with a standby thread as idle. */
+        InterlockedBitTestAndResetAffinity(&KiIdleSummary, Prcb->Number);
+        Prcb->IdleSchedule = FALSE;
+#endif
 
         /* Make the old thread ready */
         KxQueueReadyThread(OldThread, Prcb);
