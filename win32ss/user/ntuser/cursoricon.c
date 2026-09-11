@@ -2098,6 +2098,7 @@ NtUserDrawIconEx(
 {
     PCURICON_OBJECT pIcon;
     BOOL Ret;
+    BOOL Destroying;
 
     TRACE("Enter NtUserDrawIconEx\n");
     UserEnterShared();
@@ -2125,6 +2126,12 @@ NtUserDrawIconEx(
                          diFlags);
 
     UserEnterShared();
+    Destroying = UserObjectInDestroy(hIcon);
+    if (Destroying)
+    {
+        UserLeave();
+        UserEnterExclusive();
+    }
     UserDereferenceObject(pIcon);
 
     UserLeave();
