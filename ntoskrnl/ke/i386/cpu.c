@@ -1485,11 +1485,11 @@ KiFlushTargetEntireTb(IN PKIPI_CONTEXT PacketContext,
                       IN PVOID Ignored2,
                       IN PVOID Ignored3)
 {
-    /* Signal this packet as done */
-    KiIpiSignalPacketDone(PacketContext);
-
     /* Flush the TB for the Current CPU */
     KeFlushCurrentTb();
+
+    /* Signal completion only after the invalidation is globally visible. */
+    KiIpiSignalPacketDone(PacketContext);
 }
 
 /*
@@ -1538,8 +1538,11 @@ KeFlushEntireTb(IN BOOLEAN Invalid,
         /* Sanity check */
         ASSERT(Prcb == KeGetCurrentPrcb());
 
-        /* FIXME: TODO */
-        ASSERTMSG("Not yet implemented\n", FALSE);
+        while (Prcb->TargetSet != 0)
+        {
+            YieldProcessor();
+            KeMemoryBarrierWithoutFence();
+        }
     }
 #endif
 
