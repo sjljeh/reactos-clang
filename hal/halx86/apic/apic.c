@@ -18,6 +18,8 @@
 #define NDEBUG
 #include <debug.h>
 
+#include <internal/spinlock.h>
+
 #ifndef _M_AMD64
 #define APIC_LAZY_IRQL
 #endif
@@ -26,6 +28,7 @@
 
 ULONG ApicVersion;
 UCHAR HalpVectorToIndex[256];
+static KSPIN_LOCK HalpIoApicLock;
 
 #ifndef _M_AMD64
 const UCHAR
@@ -90,8 +93,30 @@ HalVectorToIRQL[16] =
 /* PRIVATE FUNCTIONS **********************************************************/
 
 FORCEINLINE
+ULONG_PTR
+ApicAcquireIoApicLock(VOID)
+{
+    ULONG_PTR Flags;
+
+    /* IOREGSEL/IOWIN form one shared indexed register interface. */
+    Flags = __readeflags();
+    _disable();
+    KxAcquireSpinLock(&HalpIoApicLock);
+    return Flags;
+}
+
+FORCEINLINE
+VOID
+ApicReleaseIoApicLock(
+    _In_ ULONG_PTR Flags)
+{
+    KxReleaseSpinLock(&HalpIoApicLock);
+    __writeeflags(Flags);
+}
+
+FORCEINLINE
 ULONG
-IOApicRead(UCHAR Register)
+IOApicReadUnlocked(UCHAR Register)
 {
     /* Select the register, then do the read */
     ASSERT(Register <= 0x3F);
@@ -101,7 +126,7 @@ IOApicRead(UCHAR Register)
 
 FORCEINLINE
 VOID
-IOApicWrite(UCHAR Register, ULONG Value)
+IOApicWriteUnlocked(UCHAR Register, ULONG Value)
 {
     /* Select the register, then do the write */
     ASSERT(Register <= 0x3F);
@@ -115,9 +140,16 @@ ApicWriteIORedirectionEntry(
     UCHAR Index,
     IOAPIC_REDIRECTION_REGISTER ReDirReg)
 {
+    ULONG_PTR Flags;
+
     ASSERT(Index < APIC_MAX_IRQ);
-    IOApicWrite(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
-    IOApicWrite(IOAPIC_REDTBL + 2 * Index + 1, ReDirReg.Long1);
+    Flags = ApicAcquireIoApicLock();
+
+    /* Program the destination before making the low dword observable. */
+    IOApicWriteUnlocked(IOAPIC_REDTBL + 2 * Index + 1, ReDirReg.Long1);
+    IOApicWriteUnlocked(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
+
+    ApicReleaseIoApicLock(Flags);
 }
 
 FORCEINLINE
@@ -126,10 +158,13 @@ ApicReadIORedirectionEntry(
     UCHAR Index)
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
+    ULONG_PTR Flags;
 
     ASSERT(Index < APIC_MAX_IRQ);
-    ReDirReg.Long0 = IOApicRead(IOAPIC_REDTBL + 2 * Index);
-    ReDirReg.Long1 = IOApicRead(IOAPIC_REDTBL + 2 * Index + 1);
+    Flags = ApicAcquireIoApicLock();
+    ReDirReg.Long0 = IOApicReadUnlocked(IOAPIC_REDTBL + 2 * Index);
+    ReDirReg.Long1 = IOApicReadUnlocked(IOAPIC_REDTBL + 2 * Index + 1);
+    ApicReleaseIoApicLock(Flags);
 
     return ReDirReg;
 }
@@ -259,8 +294,8 @@ HalpIrqToVector(UCHAR Irq)
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
 
-    /* Read low dword of the redirection entry */
-    ReDirReg.Long0 = IOApicRead(IOAPIC_REDTBL + 2 * Irq);
+    /* Read the redirection entry through the serialized index window. */
+    ReDirReg = ApicReadIORedirectionEntry(Irq);
 
     /* Return the vector */
     return (UCHAR)ReDirReg.Vector;
@@ -463,6 +498,9 @@ ApicInitializeIOApic(VOID)
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
     UCHAR Index;
     ULONG Vector;
+
+    /* Initialize serialization before the first indexed IOAPIC access. */
+    KeInitializeSpinLock(&HalpIoApicLock);
 
     /* Map the I/O Apic page */
     Pte = HalAddressToPte(IOAPIC_BASE);
@@ -709,28 +747,31 @@ HalEnableSystemInterrupt(
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
     UCHAR Index;
+    ULONG_PTR Flags;
+    BOOLEAN Result;
     ASSERT(Irql <= HIGH_LEVEL);
     ASSERT((IrqlToTpr(Irql) & 0xF0) == (Vector & 0xF0));
 
     /* Get the irq for this vector */
     Index = HalpVectorToIndex[Vector];
 
-    /* Check if its valid */
-    if (Index == APIC_FREE_VECTOR)
-    {
-        /* Interrupt is not in use */
+    /* Check if it is an IOAPIC input. */
+    if (Index >= APIC_MAX_IRQ)
         return FALSE;
-    }
 
-    /* Read the redirection entry */
-    ReDirReg = ApicReadIORedirectionEntry(Index);
+    /* Serialize the complete read-modify-write of this IOAPIC entry. */
+    Flags = ApicAcquireIoApicLock();
+    ReDirReg.Long0 = IOApicReadUnlocked(IOAPIC_REDTBL + 2 * Index);
+    ReDirReg.Long1 = IOApicReadUnlocked(IOAPIC_REDTBL + 2 * Index + 1);
 
     /* Check if the interrupt is already enabled */
     if (ReDirReg.Mask == FALSE)
     {
         /* If the vector matches, there is nothing more to do,
            otherwise something is wrong. */
-        return (ReDirReg.Vector == Vector);
+        Result = (ReDirReg.Vector == Vector);
+        ApicReleaseIoApicLock(Flags);
+        return Result;
     }
 
     /* Set up the redirection entry */
@@ -742,8 +783,10 @@ HalEnableSystemInterrupt(
         APIC_TGM_Level : APIC_TGM_Edge;
     ReDirReg.Mask = FALSE;
 
-    /* Write back the entry */
-    ApicWriteIORedirectionEntry(Index, ReDirReg);
+    /* Write the destination first and unmask with the final low write. */
+    IOApicWriteUnlocked(IOAPIC_REDTBL + 2 * Index + 1, ReDirReg.Long1);
+    IOApicWriteUnlocked(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
+    ApicReleaseIoApicLock(Flags);
 
     return TRUE;
 }
@@ -756,19 +799,20 @@ HalDisableSystemInterrupt(
 {
     IOAPIC_REDIRECTION_REGISTER ReDirReg;
     UCHAR Index;
+    ULONG_PTR Flags;
     ASSERT(Irql <= HIGH_LEVEL);
     ASSERT(Vector < RTL_NUMBER_OF(HalpVectorToIndex));
 
     Index = HalpVectorToIndex[Vector];
+    if (Index >= APIC_MAX_IRQ)
+        return;
 
-    /* Read lower dword of redirection entry */
-    ReDirReg.Long0 = IOApicRead(IOAPIC_REDTBL + 2 * Index);
-
-    /* Mask it */
+    /* Mask the entry as one serialized read-modify-write operation. */
+    Flags = ApicAcquireIoApicLock();
+    ReDirReg.Long0 = IOApicReadUnlocked(IOAPIC_REDTBL + 2 * Index);
     ReDirReg.Mask = 1;
-
-    /* Write back lower dword */
-    IOApicWrite(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
+    IOApicWriteUnlocked(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
+    ApicReleaseIoApicLock(Flags);
 }
 
 BOOLEAN
