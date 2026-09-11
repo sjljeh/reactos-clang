@@ -1270,7 +1270,11 @@ MiResolveProtoPteFault(IN BOOLEAN StoreInstruction,
         MiCopyPfn(PageFrameIndex, ProtoPageFrameIndex);
 
         /* This will drop everything MiResolveProtoPteFault referenced */
-        MiDeletePte(PointerPte, Address, Process, PointerProtoPte);
+        MiDeletePte(PointerPte,
+                    Address,
+                    Process,
+                    PointerProtoPte,
+                    TRUE);
 
         /* Because now we use this */
         Pfn1 = MI_PFN_ELEMENT(PageFrameIndex);
@@ -2323,7 +2327,11 @@ UserFault:
                 ASSERT(Pfn1->u3.e1.PrototypePte == 1);
                 ASSERT(!MI_IS_PFN_DELETED(Pfn1));
                 ProtoPte = Pfn1->PteAddress;
-                MiDeletePte(PointerPte, Address, CurrentProcess, ProtoPte);
+                MiDeletePte(PointerPte,
+                            Address,
+                            CurrentProcess,
+                            ProtoPte,
+                            TRUE);
 
                 /* And make a new shiny one with our page */
                 MiInitializePfn(PageFrameIndex, PointerPte, TRUE);

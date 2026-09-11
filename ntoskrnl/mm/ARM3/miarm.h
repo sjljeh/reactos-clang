@@ -2335,7 +2335,8 @@ MiDeletePte(
     IN PMMPTE PointerPte,
     IN PVOID VirtualAddress,
     IN PEPROCESS CurrentProcess,
-    IN PMMPTE PrototypePte
+    IN PMMPTE PrototypePte,
+    IN BOOLEAN FlushTb
 );
 
 ULONG
@@ -2544,16 +2545,28 @@ MiDeletePde(
     ASSERT(MiIsUserPde(PointerPde));
 
     /* Kill this one as a PTE */
-    MiDeletePte((PMMPTE)PointerPde, MiPdeToPte(PointerPde), CurrentProcess, NULL);
+    MiDeletePte((PMMPTE)PointerPde,
+                MiPdeToPte(PointerPde),
+                CurrentProcess,
+                NULL,
+                TRUE);
 #if _MI_PAGING_LEVELS >= 3
     /* Cascade down */
     if (MiDecrementPageTableReferences(MiPdeToPte(PointerPde)) == 0)
     {
-        MiDeletePte(MiPdeToPpe(PointerPde), PointerPde, CurrentProcess, NULL);
+        MiDeletePte(MiPdeToPpe(PointerPde),
+                    PointerPde,
+                    CurrentProcess,
+                    NULL,
+                    TRUE);
 #if _MI_PAGING_LEVELS == 4
         if (MiDecrementPageTableReferences(PointerPde) == 0)
         {
-            MiDeletePte(MiPdeToPxe(PointerPde), MiPdeToPpe(PointerPde), CurrentProcess, NULL);
+            MiDeletePte(MiPdeToPxe(PointerPde),
+                        MiPdeToPpe(PointerPde),
+                        CurrentProcess,
+                        NULL,
+                        TRUE);
         }
 #endif
     }

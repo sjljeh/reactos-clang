@@ -369,7 +369,8 @@ NTAPI
 MiDeletePte(IN PMMPTE PointerPte,
             IN PVOID VirtualAddress,
             IN PEPROCESS CurrentProcess,
-            IN PMMPTE PrototypePte)
+            IN PMMPTE PrototypePte,
+            IN BOOLEAN FlushTb)
 {
     PMMPFN Pfn1;
     MMPTE TempPte;
@@ -521,8 +522,12 @@ MiDeletePte(IN PMMPTE PointerPte,
         //CurrentProcess->NumberOfPrivatePages--;
     }
 
-    /* Flush the TLB */
-    KeFlushEntireTb(TRUE, TRUE);
+    /* Some callers aggregate invalidations while retaining the PFN lock. */
+    if (FlushTb)
+    {
+        KeFlushEntireTb(TRUE,
+                        VirtualAddress > MM_HIGHEST_USER_ADDRESS);
+    }
 }
 
 VOID
@@ -544,6 +549,7 @@ MiDeleteVirtualAddresses(
     PEPROCESS CurrentProcess;
     KIRQL OldIrql;
     BOOLEAN AddressGap = FALSE;
+    BOOLEAN FlushTb;
     PSUBSECTION Subsection;
 
     /* We should never get RosMm memory areas here */
@@ -656,6 +662,7 @@ MiDeleteVirtualAddresses(
         }
 
         /* Lock the PFN Database while we delete the PTEs */
+        FlushTb = FALSE;
         OldIrql = MiAcquirePfnLock();
         PointerPte = MiAddressToPte(Va);
         do
@@ -700,10 +707,12 @@ MiDeleteVirtualAddresses(
                     else
                     {
                         /* Delete the PTE proper */
+                        if (TempPte.u.Hard.Valid) FlushTb = TRUE;
                         MiDeletePte(PointerPte,
                                     (PVOID)Va,
                                     CurrentProcess,
-                                    PrototypePte);
+                                    PrototypePte,
+                                    FALSE);
                     }
                 }
                 else
@@ -718,6 +727,9 @@ MiDeleteVirtualAddresses(
 
                     /* Delete the PDE proper */
                     MiDeletePde(PointerPde, CurrentProcess);
+
+                    /* MiDeletePde synchronously flushed all prior changes. */
+                    FlushTb = FALSE;
 
                     /* Continue with the next PDE */
                     Va = (ULONG_PTR)MiPdeToAddress(PointerPde + 1);
@@ -735,6 +747,11 @@ MiDeleteVirtualAddresses(
             PointerPte++;
             PrototypePte++;
         } while ((Va & (PDE_MAPPED_VA - 1)) && (Va <= EndingAddress));
+
+        /* Keep freed pages unavailable until all stale translations are gone.
+         * These are process VAs, so only CPUs currently running this process
+         * can retain a translation that will not be discarded by a CR3 load. */
+        if (FlushTb) KeFlushEntireTb(TRUE, FALSE);
 
         /* Release the lock */
         MiReleasePfnLock(OldIrql);
