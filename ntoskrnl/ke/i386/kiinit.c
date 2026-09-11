@@ -825,17 +825,8 @@ KiSystemStartup(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
     RtlCopyMemory(&Idt[8], &DoubleFaultEntry, sizeof(KIDTENTRY));
 
 AppCpuInit:
-    //TODO: We don't setup IPIs yet so freeze other processors here.
-    if (Cpu)
-    {
-        KeMemoryBarrier();
-        LoaderBlock->Prcb = 0;
-
-        for (;;)
-        {
-            YieldProcessor();
-        }
-    }
+    /* The AP trampoline installed this processor's PCR in FS. */
+    Pcr = KeGetPcr();
 
     /* Loop until we can release the freeze lock */
     do
@@ -858,6 +849,9 @@ AppCpuInit:
     /* Set active processors */
     KeActiveProcessors |= __readfsdword(KPCR_SET_MEMBER);
     KeNumberProcessors++;
+
+    /* Allow the next processor to perform its serialized initialization. */
+    InterlockedExchange((PLONG)&KiFreezeExecutionLock, 0);
 
     /* Check if this is the boot CPU */
     if (!Cpu)

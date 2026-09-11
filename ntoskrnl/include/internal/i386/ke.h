@@ -441,6 +441,17 @@ KiInitializePcr(IN ULONG ProcessorNumber,
                 IN PKTHREAD IdleThread,
                 IN PVOID DpcStack);
 
+VOID
+NTAPI
+KiInitializeTSS2(
+    IN PKTSS Tss,
+    IN PKGDTENTRY TssEntry OPTIONAL);
+
+VOID
+NTAPI
+KiInitializeTSS(
+    IN PKTSS Tss);
+
 FORCEINLINE
 VOID
 Ke386SetGdtEntryBase(PKGDTENTRY GdtEntry, PVOID BaseAddress)

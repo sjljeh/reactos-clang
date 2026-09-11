@@ -33,6 +33,34 @@ typedef struct _AP_SETUP_STACK
 
 /* FUNCTIONS *****************************************************************/
 
+static
+CODE_SEG("INIT")
+VOID
+KiInitializeExceptionTss(
+    _Out_ PKTSS Tss,
+    _Inout_ PKGDTENTRY TssEntry,
+    _In_ ULONG_PTR ExceptionStack,
+    _In_ PVOID ExceptionHandler)
+{
+    KiInitializeTSS(Tss);
+    Tss->CR3 = __readcr3();
+    Tss->Esp0 = ExceptionStack;
+    Tss->Esp = ExceptionStack;
+    Tss->Eip = PtrToUlong(ExceptionHandler);
+    Tss->Cs = KGDT_R0_CODE;
+    Tss->Fs = KGDT_R0_PCR;
+    Tss->Ss = KGDT_R0_DATA;
+    Tss->Es = KGDT_R3_DATA | RPL_MASK;
+    Tss->Ds = KGDT_R3_DATA | RPL_MASK;
+
+    KiSetGdtDescriptorBase(TssEntry, (ULONG_PTR)Tss);
+    TssEntry->LimitLow = KTSS_IO_MAPS;
+    TssEntry->HighWord.Bits.LimitHi = 0;
+    TssEntry->HighWord.Bits.Type = I386_TSS;
+    TssEntry->HighWord.Bits.Pres = 1;
+    TssEntry->HighWord.Bits.Dpl = 0;
+}
+
 CODE_SEG("INIT")
 VOID
 NTAPI
@@ -40,6 +68,8 @@ KeStartAllProcessors(VOID)
 {
     PVOID KernelStack = NULL, DPCStack = NULL;
     PAPINFO APInfo = NULL;
+    PKGDTENTRY TssEntry;
+    ULONG_PTR ExceptionStack;
     ULONG ProcessorCount;
     ULONG MaximumProcessors;
 
@@ -94,19 +124,29 @@ KeStartAllProcessors(VOID)
         RtlCopyMemory(&APInfo->Gdt, (PVOID)bspGdt.Base, bspGdt.Limit + 1);
         RtlCopyMemory(&APInfo->Idt, (PVOID)bspIdt.Base, bspIdt.Limit + 1);
 
-        KiSetGdtDescriptorBase(KiGetGdtEntry(&APInfo->Gdt, KGDT_R0_PCR), (ULONG_PTR)&APInfo->Pcr);
-        KiSetGdtDescriptorBase(KiGetGdtEntry(&APInfo->Gdt, KGDT_DF_TSS), (ULONG_PTR)&APInfo->TssDoubleFault);
-        KiSetGdtDescriptorBase(KiGetGdtEntry(&APInfo->Gdt, KGDT_NMI_TSS), (ULONG_PTR)&APInfo->TssNMI);
+        KiSetGdtDescriptorBase(KiGetGdtEntry(&APInfo->Gdt, KGDT_R0_PCR),
+                               (ULONG_PTR)&APInfo->Pcr);
 
-        KiSetGdtDescriptorBase(KiGetGdtEntry(&APInfo->Gdt, KGDT_TSS), (ULONG_PTR)&APInfo->Tss);
-        // Clear TSS Busy flag (aka set the type to "TSS (Available)")
-        KiGetGdtEntry(&APInfo->Gdt, KGDT_TSS)->HighWord.Bits.Type = I386_TSS;
+        /* Initialize the normal TSS before the trampoline loads TR. */
+        TssEntry = KiGetGdtEntry(&APInfo->Gdt, KGDT_TSS);
+        KiSetGdtDescriptorBase(TssEntry, (ULONG_PTR)&APInfo->Tss);
+        TssEntry->HighWord.Bits.Type = I386_TSS;
+        TssEntry->HighWord.Bits.Pres = 1;
+        TssEntry->HighWord.Bits.Dpl = 0;
+        KiInitializeTSS2(&APInfo->Tss, TssEntry);
+        KiInitializeTSS(&APInfo->Tss);
 
-        APInfo->TssDoubleFault.Esp0 = (ULONG_PTR)&APInfo->NMIStackData;
-        APInfo->TssDoubleFault.Esp = (ULONG_PTR)&APInfo->NMIStackData;
-
-        APInfo->TssNMI.Esp0 = (ULONG_PTR)&APInfo->NMIStackData;
-        APInfo->TssNMI.Esp = (ULONG_PTR)&APInfo->NMIStackData;
+        /* Give the task-gate handlers valid per-processor TSS state. */
+        ExceptionStack = (ULONG_PTR)&APInfo->NMIStackData[
+            RTL_NUMBER_OF(APInfo->NMIStackData)];
+        KiInitializeExceptionTss(&APInfo->TssDoubleFault,
+                                 KiGetGdtEntry(&APInfo->Gdt, KGDT_DF_TSS),
+                                 ExceptionStack,
+                                 KiTrap08);
+        KiInitializeExceptionTss(&APInfo->TssNMI,
+                                 KiGetGdtEntry(&APInfo->Gdt, KGDT_NMI_TSS),
+                                 ExceptionStack,
+                                 KiTrap02);
 
         // Fill the processor state
         PKPROCESSOR_STATE ProcessorState = &APInfo->Pcr.Prcb->ProcessorState;
@@ -140,8 +180,8 @@ KeStartAllProcessors(VOID)
 
         // Update the LOADER_PARAMETER_BLOCK structure for the new processor
         KeLoaderBlock->KernelStack = (ULONG_PTR)KernelStack;
-        KeLoaderBlock->Prcb = (ULONG_PTR)&APInfo->Pcr.Prcb;
-        KeLoaderBlock->Thread = (ULONG_PTR)&APInfo->Pcr.Prcb->IdleThread;
+        KeLoaderBlock->Prcb = (ULONG_PTR)APInfo->Pcr.Prcb;
+        KeLoaderBlock->Thread = (ULONG_PTR)&APInfo->Thread;
 
         // Start the CPU
         DPRINT("Attempting to Start a CPU with number: %lu\n", ProcessorCount);

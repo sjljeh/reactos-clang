@@ -102,6 +102,10 @@ _HalpAPEntry32:
     mov eax, [esi + PsSpecialRegisters + SrCr4]
     mov cr4, eax
 
+    /* Restore the remaining control-register state from the boot CPU. */
+    mov eax, [esi + PsSpecialRegisters + SrCr0]
+    mov cr0, eax
+
     /* Load debug registers */
     mov eax, [esi + PsSpecialRegisters + SrKernelDr0]
     mov dr0, eax
@@ -126,9 +130,10 @@ _HalpAPEntry32:
     mov eax, [esi + PsContextFrame + CsEip]
     push eax
 
-    /* Load flags */
+    /* Load flags. The prepared state keeps interrupts disabled. */
     mov eax, [esi + PsContextFrame + CsEflags]
-    sahf
+    push eax
+    popfd
 
     /* Set up all GP registers */
     xor edi, edi
