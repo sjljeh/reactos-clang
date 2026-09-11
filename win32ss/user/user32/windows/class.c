@@ -1069,7 +1069,7 @@ GetClassWord(
     class = DesktopPtrToUser(Wnd->pcls);
     if (class == NULL) return 0;
 
-    if (offset <= class->cbclsExtra - sizeof(WORD))
+    if ((UINT)offset + sizeof(WORD) <= (UINT)class->cbclsExtra)
         memcpy( &retvalue, (char *)(class + 1) + offset, sizeof(retvalue) );
     else
         SetLastError( ERROR_INVALID_INDEX );
