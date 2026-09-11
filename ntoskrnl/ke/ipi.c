@@ -59,7 +59,7 @@ KiIpiSend(IN KAFFINITY TargetProcessors,
     KAFFINITY ProcessorMask;
     ULONG Processor;
 
-    ASSERT((IpiRequest & ~(IPI_APC | IPI_DPC)) == 0);
+    ASSERT((IpiRequest & ~(IPI_APC | IPI_DPC | IPI_FREEZE)) == 0);
 
     /* Do not publish requests for processors that are not online. */
     TargetProcessors &= KeActiveProcessors;
@@ -213,6 +213,11 @@ KiIpiServiceRoutine(IN PKTRAP_FRAME TrapFrame,
     while ((RequestSummary = (ULONG)InterlockedExchange(
                 (PLONG)&Prcb->RequestSummary, 0)) != 0)
     {
+        if (RequestSummary & IPI_FREEZE)
+        {
+            NT_VERIFY(KiProcessorFreezeHandler(TrapFrame, ExceptionFrame));
+        }
+
         if (RequestSummary & IPI_APC)
         {
             HalRequestSoftwareInterrupt(APC_LEVEL);
@@ -249,7 +254,7 @@ KiIpiServiceRoutine(IN PKTRAP_FRAME TrapFrame,
             ASSERT(PreviousSignal == SenderPrcb);
         }
 
-        ASSERT((RequestSummary & ~(IPI_APC | IPI_DPC |
+        ASSERT((RequestSummary & ~(IPI_APC | IPI_DPC | IPI_FREEZE |
                                    IPI_PACKET_READY)) == 0);
     }
 #endif

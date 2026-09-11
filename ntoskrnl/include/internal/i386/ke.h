@@ -452,6 +452,11 @@ NTAPI
 KiInitializeTSS(
     IN PKTSS Tss);
 
+BOOLEAN
+KiProcessorFreezeHandler(
+    _In_ PKTRAP_FRAME TrapFrame,
+    _In_opt_ PKEXCEPTION_FRAME ExceptionFrame);
+
 FORCEINLINE
 VOID
 Ke386SetGdtEntryBase(PKGDTENTRY GdtEntry, PVOID BaseAddress)

@@ -1083,6 +1083,28 @@ KiSaveProcessorState(IN PKTRAP_FRAME TrapFrame,
     KiSaveProcessorControlState(&Prcb->ProcessorState);
 }
 
+VOID
+NTAPI
+KiRestoreProcessorState(
+    _Out_ PKTRAP_FRAME TrapFrame,
+    _Out_opt_ PKEXCEPTION_FRAME ExceptionFrame)
+{
+    PKPRCB Prcb = KeGetCurrentPrcb();
+    KPROCESSOR_MODE PreviousMode;
+
+    PreviousMode = ((TrapFrame->SegCs & MODE_MASK) ||
+                    (TrapFrame->EFlags & EFLAGS_V86_MASK)) ?
+                       UserMode : KernelMode;
+
+    /* Restore any context updates made while another CPU owned the debugger. */
+    KeContextToTrapFrame(&Prcb->ProcessorState.ContextFrame,
+                         ExceptionFrame,
+                         TrapFrame,
+                         Prcb->ProcessorState.ContextFrame.ContextFlags,
+                         PreviousMode);
+    KiRestoreProcessorControlState(&Prcb->ProcessorState);
+}
+
 CODE_SEG("INIT")
 BOOLEAN
 NTAPI
