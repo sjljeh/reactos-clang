@@ -151,6 +151,13 @@ PULONG gpaulRefCount;
 volatile ULONG gulFirstFree;
 volatile ULONG gulFirstUnused;
 static PPAGED_LOOKASIDE_LIST gpaLookasideList;
+/* The handle free-list generation is only 16 bits, so wrap cannot safely
+ * distinguish an old lock-free snapshot after sustained handle churn. */
+static EX_PUSH_LOCK ghmgrFreeListLock;
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+/* i386 lookaside S-lists have the same finite-generation ABA window. */
+static EX_PUSH_LOCK gaLookasideLocks[GDIObjTypeTotal];
+#endif
 
 static VOID NTAPI GDIOBJ_vCleanup(PVOID ObjectBody);
 
@@ -244,6 +251,9 @@ static
 VOID
 InitLookasideList(UCHAR objt, ULONG cjSize)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    ExInitializePushLock(&gaLookasideLocks[objt]);
+#endif
     ExInitializePagedLookasideList(&gpaLookasideList[objt],
                                    NULL,
                                    NULL,
@@ -304,6 +314,7 @@ InitGdiHandleTable(void)
 
     gulFirstFree = 0;
     gulFirstUnused = RESERVE_ENTRIES_COUNT;
+    ExInitializePushLock(&ghmgrFreeListLock);
 
     GdiHandleTable = (PVOID)gpentHmgr;
 
@@ -381,54 +392,53 @@ static
 PENTRY
 ENTRY_pentPopFreeEntry(VOID)
 {
-    ULONG iFirst, iNext, iPrev;
+    ULONG iFirst, iNext;
     PENTRY pentFree;
 
-    DPRINT("Enter InterLockedPopFreeEntry\n");
+    DPRINT("Enter ENTRY_pentPopFreeEntry\n");
 
-    do
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusive(&ghmgrFreeListLock);
+
+    /* Get the index and sequence number of the first free entry */
+    iFirst = gulFirstFree;
+
+    /* Check if we have a free entry */
+    if (!(iFirst & GDI_HANDLE_INDEX_MASK))
     {
-        /* Get the index and sequence number of the first free entry */
-        iFirst = InterlockedReadUlong(&gulFirstFree);
-
-        /* Check if we have a free entry */
-        if (!(iFirst & GDI_HANDLE_INDEX_MASK))
+        /* Allocate a previously unused entry */
+        iFirst = gulFirstUnused++;
+        if (iFirst >= GDI_HANDLE_COUNT)
         {
-            /* Increment FirstUnused and get the new index */
-            iFirst = InterlockedIncrement((LONG*)&gulFirstUnused) - 1;
+            gulFirstUnused--;
+            ExReleasePushLockExclusive(&ghmgrFreeListLock);
+            KeLeaveCriticalRegion();
 
-            /* Check if we have unused entries left */
-            if (iFirst >= GDI_HANDLE_COUNT)
-            {
-                DPRINT1("No more GDI handles left!\n");
+            DPRINT1("No more GDI handles left!\n");
 #if DBG_ENABLE_GDIOBJ_BACKTRACES
-                DbgDumpGdiHandleTableWithBT();
+            DbgDumpGdiHandleTableWithBT();
 #endif
-                InterlockedDecrement((LONG*)&gulFirstUnused);
-                return 0;
-            }
-
-            /* Return the old entry */
-            return &gpentHmgr[iFirst];
+            return NULL;
         }
 
-        /* Get a pointer to the first free entry */
-        pentFree = &gpentHmgr[iFirst & GDI_HANDLE_INDEX_MASK];
-
-        /* Create a new value with an increased sequence number */
-        iNext = GDI_HANDLE_GET_INDEX(pentFree->einfo.hFree);
-        iNext |= (iFirst & ~GDI_HANDLE_INDEX_MASK) + 0x10000;
-
-        /* Try to exchange the FirstFree value */
-        iPrev = InterlockedCompareExchange((LONG*)&gulFirstFree,
-                                           iNext,
-                                           iFirst);
+        pentFree = &gpentHmgr[iFirst];
     }
-    while (iPrev != iFirst);
+    else
+    {
+        /* Remove the first entry from the serialized free list. Keep advancing
+         * the sequence for diagnostics, but correctness no longer depends on
+         * its 16-bit value not wrapping. */
+        pentFree = &gpentHmgr[iFirst & GDI_HANDLE_INDEX_MASK];
+        iNext = GDI_HANDLE_GET_INDEX(pentFree->einfo.hFree);
+        gulFirstFree = iNext | ((iFirst & ~GDI_HANDLE_INDEX_MASK) + 0x10000);
 
-    /* Sanity check: is entry really free? */
-    ASSERT(((ULONG_PTR)pentFree->einfo.pobj & ~GDI_HANDLE_INDEX_MASK) == 0);
+        /* Sanity check: is the entry really free? */
+        ASSERT((gpaulRefCount[pentFree - gpentHmgr] & REF_MASK_INUSE) == 0);
+        ASSERT(((ULONG_PTR)pentFree->einfo.pobj & ~GDI_HANDLE_INDEX_MASK) == 0);
+    }
 
+    ExReleasePushLockExclusive(&ghmgrFreeListLock);
+    KeLeaveCriticalRegion();
     return pentFree;
 }
 
@@ -438,9 +448,12 @@ static
 VOID
 ENTRY_vPushFreeEntry(PENTRY pentFree)
 {
-    ULONG iToFree, iFirst, iPrev, idxToFree;
+    ULONG iToFree, iFirst, idxToFree;
 
     DPRINT("Enter ENTRY_vPushFreeEntry\n");
+
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusive(&ghmgrFreeListLock);
 
     idxToFree = pentFree - gpentHmgr;
     ASSERT((gpaulRefCount[idxToFree] & REF_MASK_INUSE) == 0);
@@ -454,23 +467,14 @@ ENTRY_vPushFreeEntry(PENTRY pentFree)
     InterlockedExchangeAdd((LONG*)&gpaulRefCount[idxToFree], REF_INC_REUSE);
     pentFree->FullUnique += 0x0100;
 
-    do
-    {
-        /* Get the current first free index and sequence number */
-        iFirst = InterlockedReadUlong(&gulFirstFree);
+    /* Insert the entry at the head of the serialized free list */
+    iFirst = gulFirstFree;
+    pentFree->einfo.pobj = UlongToPtr(iFirst & GDI_HANDLE_INDEX_MASK);
+    iToFree = idxToFree | ((iFirst & ~GDI_HANDLE_INDEX_MASK) + 0x10000);
+    gulFirstFree = iToFree;
 
-        /* Set the einfo.pobj member to the index of the first free entry */
-        pentFree->einfo.pobj = UlongToPtr(iFirst & GDI_HANDLE_INDEX_MASK);
-
-        /* Combine new index and increased sequence number in iToFree */
-        iToFree = idxToFree | ((iFirst & ~GDI_HANDLE_INDEX_MASK) + 0x10000);
-
-        /* Try to atomically update the first free entry */
-        iPrev = InterlockedCompareExchange((LONG*)&gulFirstFree,
-                                           iToFree,
-                                           iFirst);
-    }
-    while (iPrev != iFirst);
+    ExReleasePushLockExclusive(&ghmgrFreeListLock);
+    KeLeaveCriticalRegion();
 }
 
 static
@@ -566,7 +570,15 @@ GDIOBJ_AllocateObject(UCHAR objt, ULONG cjSize, FLONG fl)
     if (fl & BASEFLAG_LOOKASIDE)
     {
         /* Allocate the object from a lookaside list */
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+        KeEnterCriticalRegion();
+        ExAcquirePushLockExclusive(&gaLookasideLocks[objt & 0x1f]);
+#endif
         pobj = ExAllocateFromPagedLookasideList(&gpaLookasideList[objt & 0x1f]);
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+        ExReleasePushLockExclusive(&gaLookasideLocks[objt & 0x1f]);
+        KeLeaveCriticalRegion();
+#endif
     }
     else
     {
@@ -617,7 +629,15 @@ GDIOBJ_vFreeObject(POBJ pobj)
         /* Check if the object is allocated from a lookaside list */
         if (pobj->BaseFlags & BASEFLAG_LOOKASIDE)
         {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+            KeEnterCriticalRegion();
+            ExAcquirePushLockExclusive(&gaLookasideLocks[objt]);
+#endif
             ExFreeToPagedLookasideList(&gpaLookasideList[objt], pobj);
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+            ExReleasePushLockExclusive(&gaLookasideLocks[objt]);
+            KeLeaveCriticalRegion();
+#endif
         }
         else
         {
