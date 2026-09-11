@@ -255,7 +255,7 @@ static LRESULT MCIWND_Create(HWND hWnd, LPCREATESTRUCTW cs)
     mwi = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*mwi));
     if (!mwi) return -1;
 
-    SetWindowLongW(hWnd, 0, (LPARAM)mwi);
+    SetWindowLongPtrW(hWnd, 0, (LONG_PTR)mwi);
 
     mwi->dwStyle = cs->style;
     /* There is no need to show stats if there is no caption */
