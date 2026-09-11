@@ -152,14 +152,14 @@ DIALOG_NEW_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     GROUPFORMAT format;
     INT iItem;
 
-    pNewItem = (PNEW_ITEM_CONTEXT)GetWindowLongPtrW(hDlg, 8);
+    pNewItem = (PNEW_ITEM_CONTEXT)GetWindowLongPtrW(hDlg, DWLP_USER);
 
     switch (uMsg)
     {
         case WM_INITDIALOG:
         {
             pNewItem = (PNEW_ITEM_CONTEXT)lParam;
-            SetWindowLongPtrW(hDlg, 8, lParam);
+            SetWindowLongPtrW(hDlg, DWLP_USER, lParam);
 
             for (format = Win_311; format <= NT_Unicode; ++format)
             {
@@ -272,14 +272,14 @@ DIALOG_COPY_MOVE_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     WCHAR text[MAX_STRING_LEN];
 
-    pCopyMove = (PCOPY_MOVE_CONTEXT)GetWindowLongPtrW(hDlg, 8);
+    pCopyMove = (PCOPY_MOVE_CONTEXT)GetWindowLongPtrW(hDlg, DWLP_USER);
 
     switch (uMsg)
     {
         case WM_INITDIALOG:
         {
             pCopyMove = (PCOPY_MOVE_CONTEXT)lParam;
-            SetWindowLongPtrW(hDlg, 8, lParam);
+            SetWindowLongPtrW(hDlg, DWLP_USER, lParam);
 
             if (pCopyMove->bMove)
             {
@@ -415,7 +415,7 @@ DIALOG_GROUP_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     PGROUP_ATTRIBUTES_CONTEXT pGroupAttributes;
 
-    pGroupAttributes = (PGROUP_ATTRIBUTES_CONTEXT)GetWindowLongPtrW(hDlg, 8);
+    pGroupAttributes = (PGROUP_ATTRIBUTES_CONTEXT)GetWindowLongPtrW(hDlg, DWLP_USER);
 
     switch (uMsg)
     {
@@ -424,7 +424,7 @@ DIALOG_GROUP_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
             DWORD evMask;
 
             pGroupAttributes = (PGROUP_ATTRIBUTES_CONTEXT)lParam;
-            SetWindowLongPtrW(hDlg, 8, lParam);
+            SetWindowLongPtrW(hDlg, DWLP_USER, lParam);
 
             /* Configure Richedit control for sending notification changes */
             evMask = SendDlgItemMessageW(hDlg, PM_DESCRIPTION, EM_GETEVENTMASK, 0, 0) | ENM_CHANGE;
@@ -573,14 +573,14 @@ DIALOG_SYMBOL_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     WCHAR filename[MAX_PATHNAME_LEN];
     PPICK_ICON_CONTEXT pIconContext;
 
-    pIconContext = (PPICK_ICON_CONTEXT)GetWindowLongPtrW(hDlg, 8);
+    pIconContext = (PPICK_ICON_CONTEXT)GetWindowLongPtrW(hDlg, DWLP_USER);
 
     switch (uMsg)
     {
         case WM_INITDIALOG:
         {
             pIconContext = (PPICK_ICON_CONTEXT)lParam;
-            SetWindowLongPtrW(hDlg, 8, lParam);
+            SetWindowLongPtrW(hDlg, DWLP_USER, lParam);
 
             pIconContext->hDlgCtrl = GetDlgItem(hDlg, PM_SYMBOL_LIST);
             SetDlgItemTextW(hDlg, PM_ICON_FILE, pIconContext->szName);
@@ -728,14 +728,14 @@ DIALOG_PROGRAM_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     DWORD dwBinaryType;
     PPROGRAM_ATTRIBUTES_CONTEXT pProgramAttributes;
 
-    pProgramAttributes = (PPROGRAM_ATTRIBUTES_CONTEXT)GetWindowLongPtrW(hDlg, 8);
+    pProgramAttributes = (PPROGRAM_ATTRIBUTES_CONTEXT)GetWindowLongPtrW(hDlg, DWLP_USER);
 
     switch (uMsg)
     {
         case WM_INITDIALOG:
         {
             pProgramAttributes = (PPROGRAM_ATTRIBUTES_CONTEXT)lParam;
-            SetWindowLongPtrW(hDlg, 8, lParam);
+            SetWindowLongPtrW(hDlg, DWLP_USER, lParam);
 
             evMask = SendDlgItemMessageW(hDlg, PM_COMMAND_LINE, EM_GETEVENTMASK, 0, 0) | ENM_CHANGE;
             SendDlgItemMessageW(hDlg, PM_COMMAND_LINE, EM_SETEVENTMASK, 0, evMask);
@@ -928,14 +928,14 @@ DIALOG_EXECUTE_DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     DWORD BinaryType;
     PEXECUTE_CONTEXT pExecuteContext;
 
-    pExecuteContext = (PEXECUTE_CONTEXT)GetWindowLongPtrW(hDlg, 8);
+    pExecuteContext = (PEXECUTE_CONTEXT)GetWindowLongPtrW(hDlg, DWLP_USER);
 
     switch (uMsg)
     {
         case WM_INITDIALOG:
         {
             pExecuteContext = (PEXECUTE_CONTEXT)lParam;
-            SetWindowLongPtrW(hDlg, 8, lParam);
+            SetWindowLongPtrW(hDlg, DWLP_USER, lParam);
 
             EnableDlgItem(hDlg, IDOK, ValidateEditContents(hDlg, PM_COMMAND));
 
