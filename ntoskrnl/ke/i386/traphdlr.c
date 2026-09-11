@@ -1260,14 +1260,19 @@ KiCheckForSListFault(PKTRAP_FRAME TrapFrame)
         PVOID ResumeAddress;
 
         /* Sanity check that the assembly is correct:
-           This must be mov ebx, [eax]
-           Followed by cmpxchg8b [ebp] */
+           This must be mov ebx, [eax], followed by an optional LOCK prefix
+           in MP kernels, and cmpxchg8b [ebp]. */
         ASSERT((((UCHAR*)TrapFrame->Eip)[0] == 0x8B) &&
                (((UCHAR*)TrapFrame->Eip)[1] == 0x18) &&
                (((UCHAR*)TrapFrame->Eip)[2] == 0x0F) &&
                (((UCHAR*)TrapFrame->Eip)[3] == 0xC7) &&
                (((UCHAR*)TrapFrame->Eip)[4] == 0x4D) &&
-               (((UCHAR*)TrapFrame->Eip)[5] == 0x00));
+               (((UCHAR*)TrapFrame->Eip)[5] == 0x00) ||
+               (((UCHAR*)TrapFrame->Eip)[2] == 0xF0) &&
+               (((UCHAR*)TrapFrame->Eip)[3] == 0x0F) &&
+               (((UCHAR*)TrapFrame->Eip)[4] == 0xC7) &&
+               (((UCHAR*)TrapFrame->Eip)[5] == 0x4D) &&
+               (((UCHAR*)TrapFrame->Eip)[6] == 0x00));
 
         /* Check if this is a user fault */
         if (TrapFrame->Eip == (ULONG_PTR)KeUserPopEntrySListFault)
