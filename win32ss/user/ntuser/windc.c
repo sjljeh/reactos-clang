@@ -16,6 +16,7 @@ DBG_DEFAULT_CHANNEL(UserDce);
 
 static LIST_ENTRY LEDce;
 static INT DCECount = 0; // Count of DCE in system.
+static ERESOURCE DceLock;
 
 #define DCX_CACHECOMPAREMASK (DCX_CLIPSIBLINGS | DCX_CLIPCHILDREN | \
                               DCX_NORESETATTRS | DCX_LOCKWINDOWUPDATE | \
@@ -30,7 +31,28 @@ NTAPI
 InitDCEImpl(VOID)
 {
     InitializeListHead(&LEDce);
-    return STATUS_SUCCESS;
+    return ExInitializeResourceLite(&DceLock);
+}
+
+static __inline VOID
+DceEnterExclusive(VOID)
+{
+    KeEnterCriticalRegion();
+    ExAcquireResourceExclusiveLite(&DceLock, TRUE);
+}
+
+static __inline VOID
+DceEnterShared(VOID)
+{
+    KeEnterCriticalRegion();
+    ExAcquireResourceSharedLite(&DceLock, TRUE);
+}
+
+static __inline VOID
+DceLeave(VOID)
+{
+    ExReleaseResourceLite(&DceLock);
+    KeLeaveCriticalRegion();
 }
 
 //
@@ -97,8 +119,6 @@ DceAllocDCE(PWND Window OPTIONAL, DCE_TYPE Type)
       ExFreePoolWithTag(pDce, USERTAG_DCE);
       return NULL;
   }
-  DCECount++;
-  TRACE("Alloc DCE's! %d\n",DCECount);
   pDce->hwndCurrent = (Window ? UserHMGetHandle(Window) : NULL);
   pDce->pwndOrg  = Window;
   pDce->pwndClip = Window;
@@ -106,8 +126,6 @@ DceAllocDCE(PWND Window OPTIONAL, DCE_TYPE Type)
   pDce->hrgnClipPublic = NULL;
   pDce->hrgnSavedVis = NULL;
   pDce->ppiOwner = NULL;
-
-  InsertTailList(&LEDce, &pDce->List);
 
   DCU_SetDcUndeletable(pDce->hDC);
 
@@ -138,6 +156,13 @@ DceAllocDCE(PWND Window OPTIONAL, DCE_TYPE Type)
         }
      }
   }
+
+  DceEnterExclusive();
+  InsertTailList(&LEDce, &pDce->List);
+  DCECount++;
+  TRACE("Alloc DCE's! %d\n", DCECount);
+  DceLeave();
+
   return(pDce);
 }
 
@@ -443,8 +468,8 @@ DceReleaseDC(DCE* dce, BOOL EndPaint)
 }
 
 
-HDC FASTCALL
-UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
+static HDC FASTCALL
+DceGetDCExLocked(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
 {
    PWND Parent;
    ULONG DcxFlags;
@@ -555,7 +580,6 @@ UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
    { // Scan the cheap wine list for our match.
       DCE* DceEmpty = NULL;
       DCE* DceUnused = NULL;
-      KeEnterCriticalRegion();
       ListEntry = LEDce.Flink;
       while (ListEntry != &LEDce)
       {
@@ -581,7 +605,6 @@ UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
          }
          Dce = NULL; // Loop issue?
       }
-      KeLeaveCriticalRegion();
 
       Dce = (DceEmpty == NULL) ? DceUnused : DceEmpty;
 
@@ -596,7 +619,6 @@ UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
    }
    else // If we are here, we are POWNED or having CLASS.
    {
-      KeEnterCriticalRegion();
       ListEntry = LEDce.Flink;
       while (ListEntry != &LEDce)
       {
@@ -616,7 +638,6 @@ UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
           }
           Dce = NULL; // Loop issue?
       }
-      KeLeaveCriticalRegion();
 
       if (Dce == NULL)
       {
@@ -728,6 +749,18 @@ UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
    return(Dce->hDC);
 }
 
+HDC FASTCALL
+UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
+{
+   HDC hDC;
+
+   DceEnterExclusive();
+   hDC = DceGetDCExLocked(Wnd, ClipRegion, Flags);
+   DceLeave();
+
+   return hDC;
+}
+
 /***********************************************************************
  *           DceFreeDCE
  */
@@ -739,6 +772,7 @@ DceFreeDCE(PDCE pdce, BOOLEAN Force)
   ASSERT(pdce != NULL);
   if (NULL == pdce) return;
 
+  DceEnterExclusive();
   pdce->DCXFlags |= DCX_INDESTROY;
 
   if (Force &&
@@ -777,6 +811,7 @@ DceFreeDCE(PDCE pdce, BOOLEAN Force)
 
   DCECount--;
   TRACE("Freed DCE's! %d \n", DCECount);
+  DceLeave();
 }
 
 /***********************************************************************
@@ -790,9 +825,11 @@ DceFreeWindowDCE(PWND Window)
   PDCE pDCE;
   PLIST_ENTRY ListEntry;
 
+  DceEnterExclusive();
   if (DCECount <= 0)
   {
      ERR("FreeWindowDCE No Entry! %d\n",DCECount);
+     DceLeave();
      return;
   }
 
@@ -858,6 +895,7 @@ DceFreeWindowDCE(PWND Window)
         }
      }
   }
+  DceLeave();
 }
 
 void FASTCALL
@@ -866,6 +904,7 @@ DceFreeClassDCE(PDCE pdceClass)
    PDCE pDCE;
    PLIST_ENTRY ListEntry;
 
+   DceEnterExclusive();
    ListEntry = LEDce.Flink;
    while (ListEntry != &LEDce)
    {
@@ -876,6 +915,7 @@ DceFreeClassDCE(PDCE pdceClass)
           DceFreeDCE(pDCE, TRUE); // Might have gone cheap!
        }
    }
+   DceLeave();
 }
 
 void FASTCALL
@@ -884,6 +924,7 @@ DceFreeThreadDCE(PTHREADINFO pti)
    PDCE pDCE;
    PLIST_ENTRY ListEntry;
 
+   DceEnterExclusive();
    ListEntry = LEDce.Flink;
    while (ListEntry != &LEDce)
    {
@@ -897,6 +938,7 @@ DceFreeThreadDCE(PTHREADINFO pti)
           }
        }
    }
+   DceLeave();
 }
 
 VOID FASTCALL
@@ -905,6 +947,7 @@ DceEmptyCache(VOID)
    PDCE pDCE;
    PLIST_ENTRY ListEntry;
 
+   DceEnterExclusive();
    ListEntry = LEDce.Flink;
    while (ListEntry != &LEDce)
    {
@@ -912,6 +955,7 @@ DceEmptyCache(VOID)
       ListEntry = ListEntry->Flink;
       DceFreeDCE(pDCE, TRUE);
    }
+   DceLeave();
 }
 
 VOID FASTCALL
@@ -931,6 +975,7 @@ DceResetActiveDCEs(PWND Window)
       return;
    }
 
+   DceEnterExclusive();
    ListEntry = LEDce.Flink;
    while (ListEntry != &LEDce)
    {
@@ -1017,6 +1062,7 @@ DceResetActiveDCEs(PWND Window)
             REGION_Delete(RgnVisible);
       }
    }
+   DceLeave();
 }
 
 HWND FASTCALL
@@ -1025,6 +1071,8 @@ IntWindowFromDC(HDC hDc)
   DCE *Dce;
   PLIST_ENTRY ListEntry;
   HWND Ret = NULL;
+
+  DceEnterShared();
 
   ListEntry = LEDce.Flink;
   while (ListEntry != &LEDce)
@@ -1040,6 +1088,8 @@ IntWindowFromDC(HDC hDc)
          break;
       }
   }
+
+  DceLeave();
   return Ret;
 }
 
@@ -1052,6 +1102,8 @@ UserReleaseDC(PWND Window, HDC hDc, BOOL EndPaint)
   BOOL Hit = FALSE;
 
   TRACE("%p %p\n", Window, hDc);
+  DceEnterExclusive();
+
   ListEntry = LEDce.Flink;
   while (ListEntry != &LEDce)
   {
@@ -1069,6 +1121,7 @@ UserReleaseDC(PWND Window, HDC hDc, BOOL EndPaint)
      nRet = DceReleaseDC(dce, EndPaint);
   }
 
+  DceLeave();
   return nRet;
 }
 
