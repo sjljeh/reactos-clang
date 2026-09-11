@@ -6404,6 +6404,8 @@ NtUserPaintMenuBar(
     BOOL bActive)
 {
    PWND Window;
+   PMENU Menu;
+   HFONT FontOld;
    RECT Rect;
    DWORD ret;
 
@@ -6420,6 +6422,18 @@ NtUserPaintMenuBar(
    Rect.right = Window->rcWindow.right - Window->rcWindow.left - rightBorder;
    Rect.top = top;
    Rect.bottom = 0;
+
+   Menu = UserGetMenuObject(UlongToHandle(Window->IDMenu));
+   if (Menu && Menu->cyMenu == 0)
+   {
+      FontOld = NtGdiSelectFont(hDC, ghMenuFont);
+      MENU_MenuBarCalcSize(hDC, &Rect, Menu, Window);
+      if (FontOld)
+         NtGdiSelectFont(hDC, FontOld);
+   }
+
+   if (!Menu || !UserMenuDrawNeedsExclusive(Menu))
+      UserConvertExclusiveToShared();
 
    ret = MENU_DrawMenuBar(hDC, &Rect, Window, FALSE);
 
