@@ -75,9 +75,6 @@ DceCreateDisplayDC(VOID)
 {
   UNICODE_STRING DriverName = RTL_CONSTANT_STRING(L"DISPLAY");
 
-  if (!co_IntGraphicsCheck(TRUE))
-    KeBugCheckEx(VIDEO_DRIVER_INIT_FAILURE, 0, 0, 0, USER_VERSION);
-
   return IntGdiCreateDC(&DriverName, NULL, NULL, NULL, FALSE);
 }
 
@@ -764,7 +761,18 @@ DceGetDCExLocked(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
 HDC FASTCALL
 UserGetDCEx(PWND Wnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
 {
+   PPROCESSINFO ppi;
    HDC hDC;
+
+   ppi = PsGetCurrentProcessWin32Process();
+   if (!(ppi->W32PF_flags & (W32PF_CREATEDWINORDC | W32PF_MANUALGUICHECK)))
+   {
+      /* GUI initialization allocates USER objects and must precede the DCE
+       * lock. First-use callers are required to enter USER exclusively. */
+      ASSERT(UserIsEnteredExclusive());
+      if (!co_IntGraphicsCheck(TRUE))
+         KeBugCheckEx(VIDEO_DRIVER_INIT_FAILURE, 0, 0, 0, USER_VERSION);
+   }
 
    DceEnterExclusive();
    hDC = DceGetDCExLocked(Wnd, ClipRegion, Flags);
@@ -1167,12 +1175,27 @@ UserGethWnd( HDC hdc, PWNDOBJ *pwndo)
 HDC APIENTRY
 NtUserGetDCEx(HWND hWnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
 {
+  PPROCESSINFO ppi;
   PWND Wnd=NULL;
   HDC Ret = NULL;
 
   TRACE("Enter NtUserGetDCEx: hWnd %p, ClipRegion %p, Flags %x.\n",
       hWnd, ClipRegion, Flags);
-  UserEnterShared();
+  ppi = PsGetCurrentProcessWin32Process();
+  if (!(ppi->W32PF_flags & (W32PF_CREATEDWINORDC | W32PF_MANUALGUICHECK)))
+  {
+      UserEnterExclusive();
+      if (!co_IntGraphicsCheck(TRUE))
+      {
+          UserLeave();
+          KeBugCheckEx(VIDEO_DRIVER_INIT_FAILURE, 0, 0, 0, USER_VERSION);
+      }
+      UserConvertExclusiveToShared();
+  }
+  else
+  {
+      UserEnterShared();
+  }
 
   if (hWnd && !(Wnd = UserGetWindowObject(hWnd)))
   {
