@@ -841,7 +841,7 @@ KiSystemStartup(IN PLOADER_PARAMETER_BLOCK LoaderBlock)
 
 AppCpuInit:
     /* The AP trampoline installed this processor's PCR in FS. */
-    Pcr = KeGetPcr();
+    Pcr = (PKIPCR)KeGetPcr();
 
     /* Loop until we can release the freeze lock */
     do
