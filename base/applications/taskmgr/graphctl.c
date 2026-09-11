@@ -14,13 +14,18 @@
 WNDPROC OldGraphCtrlWndProc;
 
 BOOL
-GraphCtrl_Create(PTM_GRAPH_CONTROL inst, HWND hWnd, HWND hParentWnd, PTM_FORMAT fmt)
+GraphCtrl_Create(PTM_GRAPH_CONTROL inst, HWND hWnd, HWND hParentWnd, const TM_FORMAT *fmt)
 {
     HDC     hdc, hdcg;
     HBITMAP hbmOld;
     UINT    Size;
     INT     p;
     RECT    rc;
+
+    if (!inst || !hWnd || !hParentWnd || !fmt)
+        return FALSE;
+
+    ZeroMemory(inst, sizeof(*inst));
 
     inst->hParentWnd = hParentWnd;
     inst->hWnd = hWnd;
@@ -101,6 +106,9 @@ GraphCtrl_Create(PTM_GRAPH_CONTROL inst, HWND hWnd, HWND hParentWnd, PTM_FORMAT 
     }
     SelectObject(hdcg, inst->hPen0);
 
+    /* Associate this window with its graph, including dynamic CPU graphs. */
+    SetWindowLongPtrW(hWnd, GWLP_USERDATA, (LONG_PTR)inst);
+
     return TRUE;
 
 fail:
@@ -111,6 +119,15 @@ fail:
 void
 GraphCtrl_Dispose(PTM_GRAPH_CONTROL inst)
 {
+    if (!inst)
+        return;
+
+    if (inst->hWnd && IsWindow(inst->hWnd) &&
+        (PTM_GRAPH_CONTROL)GetWindowLongPtrW(inst->hWnd, GWLP_USERDATA) == inst)
+    {
+        SetWindowLongPtrW(inst->hWnd, GWLP_USERDATA, 0);
+    }
+
     if (inst->PointBuffer)
         HeapFree(GetProcessHeap(), 0, inst->PointBuffer);
 
@@ -131,6 +148,8 @@ GraphCtrl_Dispose(PTM_GRAPH_CONTROL inst)
 
     if (inst->hbmGraph)
         DeleteObject(inst->hbmGraph);
+
+    ZeroMemory(inst, sizeof(*inst));
 }
 
 void
@@ -289,11 +308,6 @@ GraphCtrl_RedrawOnHeightChange(PTM_GRAPH_CONTROL inst, INT nh)
     GraphCtrl_RedrawBitmap(inst, nh);
 }
 
-extern TM_GRAPH_CONTROL PerformancePageCpuUsageHistoryGraph;
-extern TM_GRAPH_CONTROL PerformancePageMemUsageHistoryGraph;
-extern HWND hPerformancePageCpuUsageHistoryGraph;
-extern HWND hPerformancePageMemUsageHistoryGraph;
-
 INT_PTR CALLBACK
 GraphCtrl_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -362,12 +376,9 @@ GraphCtrl_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         case WM_SIZE:
         {
-            if (hWnd == hPerformancePageCpuUsageHistoryGraph)
-                graph = &PerformancePageCpuUsageHistoryGraph;
-            else if (hWnd == hPerformancePageMemUsageHistoryGraph)
-                graph = &PerformancePageMemUsageHistoryGraph;
-            else
-                return 0;
+            graph = (PTM_GRAPH_CONTROL)GetWindowLongPtrW(hWnd, GWLP_USERDATA);
+            if (!graph)
+                break;
 
             if (HIWORD(lParam) != graph->BitmapHeight)
             {
@@ -384,12 +395,9 @@ GraphCtrl_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             HDC         hdc;
             PAINTSTRUCT ps;
 
-            if (hWnd == hPerformancePageCpuUsageHistoryGraph)
-                graph = &PerformancePageCpuUsageHistoryGraph;
-            else if (hWnd == hPerformancePageMemUsageHistoryGraph)
-                graph = &PerformancePageMemUsageHistoryGraph;
-            else
-                return 0;
+            graph = (PTM_GRAPH_CONTROL)GetWindowLongPtrW(hWnd, GWLP_USERDATA);
+            if (!graph)
+                break;
 
             hdc = BeginPaint(hWnd, &ps);
             GetClientRect(hWnd, &rcClient);

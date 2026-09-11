@@ -31,6 +31,9 @@ SYSTEM_BASIC_INFORMATION                   SystemBasicInfo;
 SYSTEM_FILECACHE_INFORMATION               SystemCacheInfo;
 ULONG                                      SystemNumberOfHandles;
 PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION  SystemProcessorTimeInfo = NULL;
+static PULONG                              ProcessorUsage = NULL;
+static PULONG                              ProcessorSystemUsage = NULL;
+static BOOL                                HaveProcessorTimeInfo = FALSE;
 PSID                                       SystemUserSid = NULL;
 
 PCMD_LINE_CACHE global_cache = NULL;
@@ -50,6 +53,7 @@ BOOL PerfDataInitialize(void)
 {
     SID_IDENTIFIER_AUTHORITY NtSidAuthority = {SECURITY_NT_AUTHORITY};
     NTSTATUS    status;
+    SIZE_T      ProcessorArraySize;
 
     InitializeCriticalSection(&PerfDataCriticalSection);
 
@@ -58,7 +62,16 @@ BOOL PerfDataInitialize(void)
      */
     status = NtQuerySystemInformation(SystemBasicInformation, &SystemBasicInfo, sizeof(SystemBasicInfo), NULL);
     if (!NT_SUCCESS(status))
+    {
+        DeleteCriticalSection(&PerfDataCriticalSection);
         return FALSE;
+    }
+
+    if (SystemBasicInfo.NumberOfProcessors == 0)
+    {
+        DeleteCriticalSection(&PerfDataCriticalSection);
+        return FALSE;
+    }
 
     /*
      * Create the SYSTEM Sid
@@ -68,10 +81,38 @@ BOOL PerfDataInitialize(void)
     /*
      * Set up global info storage
      */
-    SystemProcessorTimeInfo = (PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)HeapAlloc(GetProcessHeap(),
-                               0, sizeof(*SystemProcessorTimeInfo) * SystemBasicInfo.NumberOfProcessors);
+    ProcessorArraySize = sizeof(*SystemProcessorTimeInfo) * SystemBasicInfo.NumberOfProcessors;
+    SystemProcessorTimeInfo = (PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)
+        HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, ProcessorArraySize);
+    ProcessorUsage = (PULONG)HeapAlloc(GetProcessHeap(),
+                                       HEAP_ZERO_MEMORY,
+                                       sizeof(*ProcessorUsage) * SystemBasicInfo.NumberOfProcessors);
+    ProcessorSystemUsage = (PULONG)HeapAlloc(GetProcessHeap(),
+                                             HEAP_ZERO_MEMORY,
+                                             sizeof(*ProcessorSystemUsage) * SystemBasicInfo.NumberOfProcessors);
 
-    return SystemProcessorTimeInfo != NULL;
+    if (!SystemProcessorTimeInfo || !ProcessorUsage || !ProcessorSystemUsage)
+    {
+        if (SystemProcessorTimeInfo)
+            HeapFree(GetProcessHeap(), 0, SystemProcessorTimeInfo);
+        if (ProcessorUsage)
+            HeapFree(GetProcessHeap(), 0, ProcessorUsage);
+        if (ProcessorSystemUsage)
+            HeapFree(GetProcessHeap(), 0, ProcessorSystemUsage);
+
+        SystemProcessorTimeInfo = NULL;
+        ProcessorUsage = NULL;
+        ProcessorSystemUsage = NULL;
+        if (SystemUserSid)
+        {
+            FreeSid(SystemUserSid);
+            SystemUserSid = NULL;
+        }
+        DeleteCriticalSection(&PerfDataCriticalSection);
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 void PerfDataUninitialize(void)
@@ -101,7 +142,20 @@ void PerfDataUninitialize(void)
 
     if (SystemProcessorTimeInfo) {
         HeapFree(GetProcessHeap(), 0, SystemProcessorTimeInfo);
+        SystemProcessorTimeInfo = NULL;
     }
+
+    if (ProcessorUsage) {
+        HeapFree(GetProcessHeap(), 0, ProcessorUsage);
+        ProcessorUsage = NULL;
+    }
+
+    if (ProcessorSystemUsage) {
+        HeapFree(GetProcessHeap(), 0, ProcessorSystemUsage);
+        ProcessorSystemUsage = NULL;
+    }
+
+    HaveProcessorTimeInfo = FALSE;
 }
 
 static void SidToUserName(PSID Sid, LPWSTR szBuffer, DWORD BufferSize)
@@ -179,6 +233,7 @@ void PerfDataRefresh(void)
     SYSTEM_HANDLE_INFORMATION                  SysHandleInfoData;
     PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION  SysProcessorTimeInfo;
     double                                     CurrentKernelTime;
+    double                                     CurrentIdleTime;
     PSECURITY_DESCRIPTOR                       ProcessSD;
     PSID                                       ProcessUser;
     ULONG                                      Buffer[64]; /* must be 4 bytes aligned! */
@@ -201,7 +256,12 @@ void PerfDataRefresh(void)
         return;
 
     /* Get processor time information */
-    SysProcessorTimeInfo = (PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)HeapAlloc(GetProcessHeap(), 0, sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION) * SystemBasicInfo.NumberOfProcessors);
+    SysProcessorTimeInfo = (PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)
+        HeapAlloc(GetProcessHeap(), 0,
+                  sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION) * SystemBasicInfo.NumberOfProcessors);
+    if (!SysProcessorTimeInfo)
+        return;
+
     status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, SysProcessorTimeInfo, sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION) * SystemBasicInfo.NumberOfProcessors, &ulSize);
 
     if (!NT_SUCCESS(status))
@@ -254,8 +314,40 @@ void PerfDataRefresh(void)
     /*
      * Save system processor time info
      */
+    if (HaveProcessorTimeInfo)
+    {
+        for (Idx = 0; Idx < (ULONG)SystemBasicInfo.NumberOfProcessors; Idx++)
+        {
+            double IdleDelta, KernelDelta, UserDelta, TotalDelta;
+            double BusyDelta, BusyKernelDelta;
+
+            IdleDelta = Li2Double(SysProcessorTimeInfo[Idx].IdleTime) -
+                        Li2Double(SystemProcessorTimeInfo[Idx].IdleTime);
+            KernelDelta = Li2Double(SysProcessorTimeInfo[Idx].KernelTime) -
+                          Li2Double(SystemProcessorTimeInfo[Idx].KernelTime);
+            UserDelta = Li2Double(SysProcessorTimeInfo[Idx].UserTime) -
+                        Li2Double(SystemProcessorTimeInfo[Idx].UserTime);
+            TotalDelta = KernelDelta + UserDelta;
+
+            ProcessorUsage[Idx] = 0;
+            ProcessorSystemUsage[Idx] = 0;
+            if (TotalDelta > 0.0)
+            {
+                BusyDelta = TotalDelta - IdleDelta;
+                BusyKernelDelta = KernelDelta - IdleDelta;
+                if (BusyDelta < 0.0) BusyDelta = 0.0;
+                if (BusyKernelDelta < 0.0) BusyKernelDelta = 0.0;
+                if (BusyKernelDelta > BusyDelta) BusyKernelDelta = BusyDelta;
+
+                ProcessorUsage[Idx] = (ULONG)min(max(BusyDelta * 100.0 / TotalDelta, 0.0), 100.0);
+                ProcessorSystemUsage[Idx] = (ULONG)min(max(BusyKernelDelta * 100.0 / TotalDelta, 0.0), 100.0);
+            }
+        }
+    }
+
     memcpy(SystemProcessorTimeInfo, SysProcessorTimeInfo,
            sizeof(*SystemProcessorTimeInfo) * SystemBasicInfo.NumberOfProcessors);
+    HaveProcessorTimeInfo = TRUE;
 
     if (SysProcessorTimeInfo) {
         HeapFree(GetProcessHeap(), 0, SysProcessorTimeInfo);
@@ -268,24 +360,29 @@ void PerfDataRefresh(void)
 
     for (CurrentKernelTime=0, Idx=0; Idx<(ULONG)SystemBasicInfo.NumberOfProcessors; Idx++) {
         CurrentKernelTime += Li2Double(SystemProcessorTimeInfo[Idx].KernelTime);
-        CurrentKernelTime += Li2Double(SystemProcessorTimeInfo[Idx].DpcTime);
-        CurrentKernelTime += Li2Double(SystemProcessorTimeInfo[Idx].InterruptTime);
     }
 
     /* If it's a first call - skip idle time calcs */
     if (liOldIdleTime.QuadPart != 0) {
         /*  CurrentValue = NewValue - OldValue */
-        dbIdleTime = Li2Double(SysPerfInfo.IdleProcessTime) - Li2Double(liOldIdleTime);
+        CurrentIdleTime = Li2Double(SysPerfInfo.IdleProcessTime) - Li2Double(liOldIdleTime);
         dbKernelTime = CurrentKernelTime - OldKernelTime;
         dbSystemTime = Li2Double(SysTimeInfo.CurrentTime) - Li2Double(liOldSystemTime);
 
-        /*  CurrentCpuIdle = IdleTime / SystemTime */
-        dbIdleTime = dbIdleTime / dbSystemTime;
-        dbKernelTime = dbKernelTime / dbSystemTime;
-
-        /*  CurrentCpuUsage% = 100 - (CurrentCpuIdle * 100) / NumberOfProcessors */
-        dbIdleTime = 100.0 - dbIdleTime * 100.0 / (double)SystemBasicInfo.NumberOfProcessors; /* + 0.5; */
-        dbKernelTime = 100.0 - dbKernelTime * 100.0 / (double)SystemBasicInfo.NumberOfProcessors; /* + 0.5; */
+        if (dbSystemTime > 0.0)
+        {
+            /* KernelTime includes IdleTime; report only busy kernel time. */
+            dbKernelTime -= CurrentIdleTime;
+            dbIdleTime = 100.0 - CurrentIdleTime * 100.0 /
+                         dbSystemTime / (double)SystemBasicInfo.NumberOfProcessors;
+            dbKernelTime = dbKernelTime * 100.0 /
+                           dbSystemTime / (double)SystemBasicInfo.NumberOfProcessors;
+        }
+        else
+        {
+            dbIdleTime = 0.0;
+            dbKernelTime = 0.0;
+        }
     }
 
     /* Store new CPU's idle and system time */
@@ -482,6 +579,35 @@ ULONG PerfDataGetProcessorSystemUsage(void)
     EnterCriticalSection(&PerfDataCriticalSection);
     Result = (ULONG)min(max(dbKernelTime, 0.), 100.);
     LeaveCriticalSection(&PerfDataCriticalSection);
+    return Result;
+}
+
+ULONG PerfDataGetProcessorCount(void)
+{
+    return SystemBasicInfo.NumberOfProcessors;
+}
+
+ULONG PerfDataGetProcessorUsageByIndex(ULONG Index)
+{
+    ULONG Result = 0;
+
+    EnterCriticalSection(&PerfDataCriticalSection);
+    if (ProcessorUsage && Index < (ULONG)SystemBasicInfo.NumberOfProcessors)
+        Result = ProcessorUsage[Index];
+    LeaveCriticalSection(&PerfDataCriticalSection);
+
+    return Result;
+}
+
+ULONG PerfDataGetProcessorSystemUsageByIndex(ULONG Index)
+{
+    ULONG Result = 0;
+
+    EnterCriticalSection(&PerfDataCriticalSection);
+    if (ProcessorSystemUsage && Index < (ULONG)SystemBasicInfo.NumberOfProcessors)
+        Result = ProcessorSystemUsage[Index];
+    LeaveCriticalSection(&PerfDataCriticalSection);
+
     return Result;
 }
 
