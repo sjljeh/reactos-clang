@@ -42,7 +42,7 @@
 \** Define the Console Leader Process for the console window **/
 #define GWLP_CONWND_ALLOC      (2 * sizeof(LONG_PTR))
 #define GWLP_CONSOLE_LEADER_PID 0
-#define GWLP_CONSOLE_LEADER_TID 4
+#define GWLP_CONSOLE_LEADER_TID sizeof(LONG_PTR)
 
 VOID
 SetConWndConsoleLeaderCID(IN PGUI_CONSOLE_DATA GuiData)

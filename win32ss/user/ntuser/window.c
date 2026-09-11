@@ -4195,7 +4195,7 @@ NtUserQueryWindow(HWND hWnd, DWORD Index)
 {
 /* Console Leader Process CID Window offsets */
 #define GWLP_CONSOLE_LEADER_PID 0
-#define GWLP_CONSOLE_LEADER_TID 4
+#define GWLP_CONSOLE_LEADER_TID sizeof(LONG_PTR)
 
    DWORD_PTR Result = 0;
    PWND pWnd, pwndActive;
