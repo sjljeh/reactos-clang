@@ -751,9 +751,6 @@ KeInsertQueueDpc(IN PKDPC Dpc,
         Cpu = Prcb->Number;
     }
 
-    /* ROS Sanity Check */
-    ASSERT(Prcb == CurrentPrcb);
-
     /* Check if this is a threaded DPC and threaded DPCs are enabled */
     if ((Dpc->Type == ThreadedDpcObject) && (Prcb->ThreadDpcEnable))
     {
@@ -991,6 +988,8 @@ KeSetTargetProcessorDpc(IN PKDPC Dpc,
 {
     /* Set a target CPU */
     ASSERT_DPC(Dpc);
+    ASSERT(Number >= 0);
+    ASSERT((UCHAR)Number < MAXIMUM_PROCESSORS);
     Dpc->Number = Number + MAXIMUM_PROCESSORS;
 }
 

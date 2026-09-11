@@ -527,17 +527,8 @@ FORCEINLINE
 BOOLEAN
 KiTryThreadLock(IN PKTHREAD Thread)
 {
-    LONG Value;
-
-    /* If the lock isn't acquired, return false */
-    if (!Thread->ThreadLock) return FALSE;
-
-    /* Otherwise, try to acquire it and check the result */
-    Value = 1;
-    Value = InterlockedExchange((PLONG)&Thread->ThreadLock, Value);
-
-    /* Return the lock state */
-    return (Value == 1);
+    /* TRUE means the lock was already owned; FALSE means we acquired it. */
+    return InterlockedCompareExchange((PLONG)&Thread->ThreadLock, 1, 0) != 0;
 }
 
 FORCEINLINE
