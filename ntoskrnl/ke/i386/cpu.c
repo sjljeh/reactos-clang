@@ -1536,11 +1536,12 @@ KeFlushSingleTb(
     _In_ BOOLEAN AllProcessors)
 {
 #ifdef CONFIG_SMP
-    PKPRCB Prcb = KeGetCurrentPrcb();
+    PKPRCB Prcb;
     KAFFINITY TargetAffinity;
     KIRQL OldIrql;
 
     OldIrql = KeRaiseIrqlToSynchLevel();
+    Prcb = KeGetCurrentPrcb();
     TargetAffinity = AllProcessors ?
         KeActiveProcessors : KeGetCurrentProcess()->ActiveProcessors;
     TargetAffinity &= ~Prcb->SetMember;
@@ -1550,7 +1551,7 @@ KeFlushSingleTb(
         KiIpiSendPacket(TargetAffinity,
                         KiFlushTargetSingleTb,
                         NULL,
-                        (ULONG_PTR)Address,
+                        Address,
                         NULL);
     }
 
@@ -1580,17 +1581,25 @@ KeFlushEntireTb(IN BOOLEAN Invalid,
     KIRQL OldIrql;
 #ifdef CONFIG_SMP
     KAFFINITY TargetAffinity;
-    PKPRCB Prcb = KeGetCurrentPrcb();
+    PKPRCB Prcb;
+#endif
+
+    UNREFERENCED_PARAMETER(Invalid);
+#ifndef CONFIG_SMP
+    UNREFERENCED_PARAMETER(AllProcessors);
 #endif
 
     /* Raise the IRQL for the TB Flush */
     OldIrql = KeRaiseIrqlToSynchLevel();
 
 #ifdef CONFIG_SMP
+    Prcb = KeGetCurrentPrcb();
+
     /* FIXME: Use KiTbFlushTimeStamp to synchronize TB flush */
 
     /* Get the current processor affinity, and exclude ourselves */
-    TargetAffinity = KeActiveProcessors;
+    TargetAffinity = AllProcessors ?
+        KeActiveProcessors : KeGetCurrentProcess()->ActiveProcessors;
     TargetAffinity &= ~Prcb->SetMember;
 
     /* Make sure this is MP */
@@ -1600,7 +1609,7 @@ KeFlushEntireTb(IN BOOLEAN Invalid,
         KiIpiSendPacket(TargetAffinity,
                         KiFlushTargetEntireTb,
                         NULL,
-                        0,
+                        NULL,
                         NULL);
     }
 #endif

@@ -692,7 +692,7 @@ typedef struct _KPRCB
     volatile ULONG IpiFrozen;
     UCHAR PrcbPad3[40];
     volatile ULONG RequestSummary;
-    volatile struct _KPRCB *SignalDone;
+    struct _KPRCB * volatile SignalDone;
     UCHAR PrcbPad4[56];
     struct _KDPC_DATA DpcData[2];
     PVOID DpcStack;

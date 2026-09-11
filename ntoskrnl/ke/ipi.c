@@ -28,7 +28,7 @@ KiIpiGenericCallTarget(IN PKIPI_CONTEXT PacketContext,
                        IN PVOID Count)
 {
 #if defined(CONFIG_SMP) && defined(_M_IX86)
-    volatile ULONG *Barrier = Count;
+    volatile LONG *Barrier = Count;
 
     /* Report that this processor has reached the entry barrier. */
     InterlockedDecrement((PLONG)Barrier);
@@ -90,15 +90,19 @@ VOID
 NTAPI
 KiIpiSendPacket(IN KAFFINITY TargetProcessors,
                 IN PKIPI_WORKER WorkerFunction,
-                IN PKIPI_BROADCAST_WORKER BroadcastFunction,
-                IN ULONG_PTR Context,
-                IN PULONG Count)
+                IN PVOID Parameter1,
+                IN PVOID Parameter2,
+                IN PVOID Parameter3)
 {
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     PKPRCB CurrentPrcb = KeGetCurrentPrcb();
     PKPRCB TargetPrcb;
     KAFFINITY ProcessorMask;
     ULONG Processor;
+
+    ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
+    ASSERT(KeGetCurrentIrql() < IPI_LEVEL);
+    ASSERT(WorkerFunction != NULL);
 
     /* Packet execution on the sender is handled by the caller. */
     TargetProcessors &= KeActiveProcessors & ~CurrentPrcb->SetMember;
@@ -107,9 +111,9 @@ KiIpiSendPacket(IN KAFFINITY TargetProcessors,
 
     ASSERT(CurrentPrcb->TargetSet == 0);
 
-    CurrentPrcb->CurrentPacket[0] = (PVOID)BroadcastFunction;
-    CurrentPrcb->CurrentPacket[1] = (PVOID)Context;
-    CurrentPrcb->CurrentPacket[2] = Count;
+    CurrentPrcb->CurrentPacket[0] = Parameter1;
+    CurrentPrcb->CurrentPacket[1] = Parameter2;
+    CurrentPrcb->CurrentPacket[2] = Parameter3;
     CurrentPrcb->WorkerRoutine = WorkerFunction;
     InterlockedExchange((PLONG)&CurrentPrcb->TargetSet,
                         (LONG)TargetProcessors);
@@ -142,9 +146,9 @@ KiIpiSendPacket(IN KAFFINITY TargetProcessors,
 #else
     UNREFERENCED_PARAMETER(TargetProcessors);
     UNREFERENCED_PARAMETER(WorkerFunction);
-    UNREFERENCED_PARAMETER(BroadcastFunction);
-    UNREFERENCED_PARAMETER(Context);
-    UNREFERENCED_PARAMETER(Count);
+    UNREFERENCED_PARAMETER(Parameter1);
+    UNREFERENCED_PARAMETER(Parameter2);
+    UNREFERENCED_PARAMETER(Parameter3);
 #endif
 }
 
@@ -155,12 +159,14 @@ KiIpiSignalPacketDone(IN PKIPI_CONTEXT PacketContext)
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     PKPRCB SenderPrcb = PacketContext;
     KAFFINITY SetMember = KeGetCurrentPrcb()->SetMember;
+    KAFFINITY OldTargetSet;
 
     ASSERT(SenderPrcb != NULL);
-    ASSERT(SenderPrcb->TargetSet & SetMember);
 
     /* Clearing our bit releases a sender waiting for packet completion. */
-    InterlockedAnd((PLONG)&SenderPrcb->TargetSet, ~(LONG)SetMember);
+    OldTargetSet = (KAFFINITY)InterlockedAnd(
+        (PLONG)&SenderPrcb->TargetSet, ~(LONG)SetMember);
+    ASSERT(OldTargetSet & SetMember);
 #else
     UNREFERENCED_PARAMETER(PacketContext);
 #endif
@@ -169,13 +175,19 @@ KiIpiSignalPacketDone(IN PKIPI_CONTEXT PacketContext)
 VOID
 FASTCALL
 KiIpiSignalPacketDoneAndStall(IN PKIPI_CONTEXT PacketContext,
-                              IN volatile PULONG ReverseStall)
+                              IN volatile ULONG *ReverseStall)
 {
 #if defined(CONFIG_SMP) && defined(_M_IX86)
+    ULONG EntryPhase;
+
     ASSERT(ReverseStall != NULL);
+
+    /* Capture the phase before releasing the source packet. */
+    EntryPhase = *ReverseStall;
+    KeMemoryBarrierWithoutFence();
     KiIpiSignalPacketDone(PacketContext);
 
-    while (*ReverseStall != 0)
+    while (*ReverseStall == EntryPhase)
     {
         YieldProcessor();
         KeMemoryBarrierWithoutFence();
@@ -274,21 +286,31 @@ KeIpiGenericCall(IN PKIPI_BROADCAST_WORKER Function,
     KIRQL OldIrql, OldIrql2;
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     KAFFINITY Affinity;
-    ULONG Count;
-    PKPRCB Prcb = KeGetCurrentPrcb();
+    KAFFINITY RemainingSet;
+    volatile LONG Count;
+    PKPRCB Prcb;
 #endif
 
-    /* Raise to DPC level if required */
+    ASSERT(Function != NULL);
+
+    /* Raise high enough to prevent migration and nested packet producers. */
     OldIrql = KeGetCurrentIrql();
-    if (OldIrql < DISPATCH_LEVEL) KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
+    ASSERT(OldIrql < IPI_LEVEL);
+    if (OldIrql < SYNCH_LEVEL) KeRaiseIrql(SYNCH_LEVEL, &OldIrql);
 
 #if defined(CONFIG_SMP) && defined(_M_IX86)
-    /* Get current processor count and affinity */
-    Count = KeNumberProcessors;
-    Affinity = KeActiveProcessors;
+    Prcb = KeGetCurrentPrcb();
 
-    /* Exclude ourselves */
-    Affinity &= ~Prcb->SetMember;
+    /* Get the target affinity after migration is disabled. */
+    Affinity = KeActiveProcessors & ~Prcb->SetMember;
+
+    Count = 1;
+    for (RemainingSet = Affinity;
+         RemainingSet != 0;
+         RemainingSet &= RemainingSet - 1)
+    {
+        Count++;
+    }
 #endif
 
     /* Serialize generic calls so every sender owns one complete packet. */
@@ -299,9 +321,9 @@ KeIpiGenericCall(IN PKIPI_BROADCAST_WORKER Function,
     {
         KiIpiSendPacket(Affinity,
                         KiIpiGenericCallTarget,
-                        Function,
-                        Argument,
-                        &Count);
+                        (PVOID)(ULONG_PTR)Function,
+                        (PVOID)Argument,
+                        (PVOID)&Count);
 
         /* Wait until every remote processor has reached the barrier. */
         while (Count != 1)

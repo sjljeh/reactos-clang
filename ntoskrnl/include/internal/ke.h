@@ -360,9 +360,9 @@ NTAPI
 KiIpiSendPacket(
     IN KAFFINITY TargetProcessors,
     IN PKIPI_WORKER WorkerFunction,
-    IN PKIPI_BROADCAST_WORKER BroadcastFunction,
-    IN ULONG_PTR Context,
-    IN PULONG Count
+    IN PVOID Parameter1 OPTIONAL,
+    IN PVOID Parameter2 OPTIONAL,
+    IN PVOID Parameter3 OPTIONAL
 );
 
 VOID
@@ -375,7 +375,7 @@ VOID
 FASTCALL
 KiIpiSignalPacketDoneAndStall(
     IN PKIPI_CONTEXT PacketContext,
-    IN volatile PULONG ReverseStall
+    IN volatile ULONG *ReverseStall
 );
 
 /* next file ***************************************************************/
