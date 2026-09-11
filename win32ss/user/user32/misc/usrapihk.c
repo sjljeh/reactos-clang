@@ -282,7 +282,7 @@ InitUserApiHook(HINSTANCE hInstance, USERAPIHOOKPROC pfn)
   {
      ghmodUserApiHook = hInstance;
      // Do not over write GetRealWindowOwner.
-     RtlCopyMemory(&guah, &uah, sizeof(USERAPIHOOK) - sizeof(LONG));
+     RtlCopyMemory(&guah, &uah, FIELD_OFFSET(USERAPIHOOK, GetRealWindowOwner));
      gpfnInitUserApi = pfn;
      gcLoadUserApiHook = 1;
      gfUserApiHook = 1;
