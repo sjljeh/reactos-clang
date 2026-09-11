@@ -454,7 +454,9 @@ RegEnumValueW(
                 /* if the type is REG_SZ and data is not 0-terminated
                  * and there is enough space in the buffer NT appends a \0 */
                 if (IsStringType(ValueInfo->Type) &&
-                    ValueInfo->DataLength <= *DataLength - sizeof(WCHAR))
+                    ValueInfo->DataLength >= sizeof(WCHAR) &&
+                    ValueInfo->DataLength % sizeof(WCHAR) == 0 &&
+                    *DataLength - ValueInfo->DataLength >= sizeof(WCHAR))
                 {
                     WCHAR *ptr = (WCHAR *)((ULONG_PTR)Data + ValueInfo->DataLength);
                     if ((ptr > (WCHAR *)Data) && ptr[-1])
