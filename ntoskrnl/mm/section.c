@@ -1465,6 +1465,38 @@ AssignPagesToSegment:
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS
+MmWaitForViewAttributeOperations(
+    _In_ PMMSUPPORT AddressSpace,
+    _In_ PVOID BaseAddress,
+    _In_ SIZE_T RegionSize)
+{
+    PEPROCESS Process = MmGetAddressSpaceOwner(AddressSpace);
+    ULONG i;
+
+    for (i = 0; i < PAGE_ROUND_UP(RegionSize) / PAGE_SIZE; i++)
+    {
+        SWAPENTRY SwapEntry;
+        PVOID Address = (PUCHAR)BaseAddress + (i * PAGE_SIZE);
+
+        MmGetPageFileMapping(Process, Address, &SwapEntry);
+        if (SwapEntry == MM_WAIT_ENTRY)
+        {
+            /*
+             * The page operation needs the address-space lock in order to
+             * complete. Drop it before waiting and make the caller restart
+             * with freshly located memory-area and region pointers.
+             */
+            MmUnlockAddressSpace(AddressSpace);
+            KeDelayExecutionThread(KernelMode, FALSE, &TinyTime);
+            MmLockAddressSpace(AddressSpace);
+            return STATUS_MM_RESTART_OPERATION;
+        }
+    }
+
+    return STATUS_SUCCESS;
+}
+
 static VOID
 MmAlterViewAttributes(PMMSUPPORT AddressSpace,
                       PVOID BaseAddress,
@@ -1499,19 +1531,9 @@ MmAlterViewAttributes(PMMSUPPORT AddressSpace,
             PVOID Address = (char*)BaseAddress + (i * PAGE_SIZE);
             ULONG Protect = NewProtect;
 
-            /* Wait for a wait entry to disappear */
-            do
-            {
-                MmGetPageFileMapping(Process, Address, &SwapEntry);
-                if (SwapEntry != MM_WAIT_ENTRY)
-                    break;
-                MmUnlockSectionSegment(Segment);
-                MmUnlockAddressSpace(AddressSpace);
-                KeDelayExecutionThread(KernelMode, FALSE, &TinyTime);
-                MmLockAddressSpace(AddressSpace);
-                MmLockSectionSegment(Segment);
-            }
-            while (TRUE);
+            /* The caller waited before changing the region topology. */
+            MmGetPageFileMapping(Process, Address, &SwapEntry);
+            ASSERT(SwapEntry != MM_WAIT_ENTRY);
 
             /*
              * If we doing COW for this segment then check if the page is
@@ -1605,6 +1627,13 @@ MmNotPresentFaultSectionView(PMMSUPPORT AddressSpace,
                       + MemoryArea->SectionData.ViewOffset;
 
     Segment = MemoryArea->SectionData.Segment;
+
+    Status = MmWaitForViewAttributeOperations(AddressSpace,
+                                              PAddress,
+                                              PAGE_SIZE);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
     Region = MmFindRegion((PVOID)MA_GetStartingAddress(MemoryArea),
                           &MemoryArea->SectionData.RegionListHead,
                           Address, NULL);
@@ -1967,12 +1996,12 @@ MmAccessFaultSectionView(PMMSUPPORT AddressSpace,
     /* Make sure we have a page mapping for this address.  */
     if (!MmIsPagePresent(Process, Address))
     {
-        NTSTATUS Status = MmNotPresentFaultSectionView(AddressSpace, MemoryArea, Address, Locked);
-        if (!NT_SUCCESS(Status))
-        {
-            /* This is invalid access ! */
-            return Status;
-        }
+        /* This path can drop the address-space lock. Retry the access with
+         * freshly located memory-area and region pointers afterward. */
+        return MmNotPresentFaultSectionView(AddressSpace,
+                                            MemoryArea,
+                                            Address,
+                                            Locked);
     }
 
     /*
@@ -2109,6 +2138,29 @@ MmProtectSectionView(PMMSUPPORT AddressSpace,
     MaxLength = MA_GetEndingAddress(MemoryArea) - (ULONG_PTR)BaseAddress;
     if (Length > MaxLength)
         Length = (ULONG)MaxLength;
+
+    do
+    {
+        Status = MmWaitForViewAttributeOperations(AddressSpace,
+                                                  BaseAddress,
+                                                  Length);
+        if (Status == STATUS_MM_RESTART_OPERATION)
+        {
+            PMEMORY_AREA CurrentMemoryArea;
+
+            CurrentMemoryArea = MmLocateMemoryAreaByAddress(AddressSpace,
+                                                            BaseAddress);
+            if ((CurrentMemoryArea != MemoryArea) ||
+                CurrentMemoryArea->DeleteInProgress)
+            {
+                return STATUS_NOT_MAPPED_VIEW;
+            }
+        }
+    }
+    while (Status == STATUS_MM_RESTART_OPERATION);
+
+    if (!NT_SUCCESS(Status))
+        return Status;
 
     Region = MmFindRegion((PVOID)MA_GetStartingAddress(MemoryArea),
                           &MemoryArea->SectionData.RegionListHead,
