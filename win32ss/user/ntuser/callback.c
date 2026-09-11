@@ -342,7 +342,9 @@ co_IntCallWindowProc(WNDPROC Proc,
                                &ResultLength);
    if (!NT_SUCCESS(Status))
    {
-      ERR("Error Callback to User space Status %lx Message %d\n",Status,Message);
+      /* Avoid debugger entry on an already exhausted kernel stack. */
+      if (Status != STATUS_STACK_OVERFLOW)
+         ERR("Error Callback to User space Status %lx Message %d\n",Status,Message);
       UserEnterCo();
       IntRestoreTebWndCallback(Wnd, pWnd, pActCtx);
       if (lParamBufferSize != -1)

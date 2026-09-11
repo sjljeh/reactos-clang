@@ -281,14 +281,10 @@ KiUserModeCallout(PKCALLOUT_FRAME CalloutFrame)
         /* We don't, we'll have to grow our stack */
         Status = MmGrowKernelStack((PVOID)InitialStack);
 
-        /* Quit if we failed */
+        /* Quit if we failed. Do not invoke the debugger while the kernel
+         * stack is already too shallow to accommodate another callback. */
         if (!NT_SUCCESS(Status))
         {
-            if (Status == STATUS_STACK_OVERFLOW)
-            {
-                DPRINT1("Thread wants too much stack\n");
-            }
-
             return Status;
         }
     }
