@@ -234,7 +234,7 @@ IntNotifyWinEvent(
    PEVENTHOOK pEH;
    HWINEVENTHOOK *pHookHandles;
    PTHREADINFO pti, ptiCurrent;
-   USER_REFERENCE_ENTRY Ref;
+   USER_REFERENCE_ENTRY Ref, WndRef;
    UINT i;
 
    TRACE("IntNotifyWinEvent GlobalEvents = %p pWnd %p\n", GlobalEvents, pWnd);
@@ -250,9 +250,16 @@ IntNotifyWinEvent(
    else
       pti = ptiCurrent;
 
+   if (pWnd)
+      UserRefObjectCo(pWnd, &WndRef);
+
    pHookHandles = IntGetEventHookHandles();
    if (!pHookHandles)
+   {
+      if (pWnd)
+         UserDerefObjectCo(pWnd);
       return;
+   }
 
    for (i = 0; pHookHandles[i]; i++)
    {
@@ -304,6 +311,8 @@ IntNotifyWinEvent(
    }
 
    ExFreePoolWithTag(pHookHandles, TAG_HOOK);
+   if (pWnd)
+      UserDerefObjectCo(pWnd);
 }
 
 VOID
