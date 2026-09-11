@@ -38,8 +38,8 @@ VOID
 NTAPI
 KeStartAllProcessors(VOID)
 {
-    PVOID KernelStack, DPCStack;
-    PAPINFO APInfo;
+    PVOID KernelStack = NULL, DPCStack = NULL;
+    PAPINFO APInfo = NULL;
     ULONG ProcessorCount;
     ULONG MaximumProcessors;
 
@@ -157,11 +157,14 @@ KeStartAllProcessors(VOID)
             KeMemoryBarrier();
             YieldProcessor();
         }
+
+        /* The new processor now owns its PCR, idle thread and stacks. */
+        APInfo = NULL;
+        KernelStack = NULL;
+        DPCStack = NULL;
     }
 
-    // The last CPU didn't start - clean the data
-    ProcessorCount--;
-
+    /* Clean up only an unsuccessful final startup attempt. */
     if (APInfo)
         ExFreePoolWithTag(APInfo, TAG_KERNEL);
     if (KernelStack)
@@ -169,5 +172,5 @@ KeStartAllProcessors(VOID)
     if (DPCStack)
         MmDeleteKernelStack(DPCStack, FALSE);
 
-    DPRINT1("KeStartAllProcessors: Successful AP startup count is %lu\n", ProcessorCount);
+    DPRINT1("KeStartAllProcessors: Successful AP startup count is %lu\n", ProcessorCount - 1);
 }
