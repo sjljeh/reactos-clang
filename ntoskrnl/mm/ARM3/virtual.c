@@ -2387,10 +2387,10 @@ MiProtectVirtualMemory(IN PEPROCESS Process,
                     // FIXME: remove the page from the WS
                     MI_WRITE_INVALID_PTE(PointerPte, PteContents);
 #ifdef CONFIG_SMP
-                    // FIXME: Should invalidate entry in every CPU TLB
-                    ASSERT(KeNumberProcessors == 1);
-#endif
+                    KeFlushEntireTb(TRUE, TRUE);
+#else
                     KeInvalidateTlbEntry(MiPteToAddress(PointerPte));
+#endif
 
                     /* We are done for this PTE */
                     MiReleasePfnLock(OldIrql);
