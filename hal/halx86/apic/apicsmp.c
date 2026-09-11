@@ -15,7 +15,7 @@
 #define NDEBUG
 #include <debug.h>
 
-#define APIC_ICR_DELIVERY_TIMEOUT 1000000
+#define APIC_ICR_DELIVERY_TIMEOUT_US 100000
 
 extern PPROCESSOR_IDENTITY HalpProcessorIdentity;
 extern HALP_APIC_INFO_TABLE HalpApicInfoTable;
@@ -29,13 +29,13 @@ ApicWaitForIcrIdle(VOID)
     ULONG Retry;
     APIC_INTERRUPT_COMMAND_REGISTER Icr;
 
-    for (Retry = 0; Retry < APIC_ICR_DELIVERY_TIMEOUT; Retry++)
+    for (Retry = 0; Retry < APIC_ICR_DELIVERY_TIMEOUT_US; Retry++)
     {
         Icr.Long0 = ApicRead(APIC_ICR0);
         if (!Icr.DeliveryStatus)
             return TRUE;
 
-        YieldProcessor();
+        KeStallExecutionProcessor(1);
     }
 
     return FALSE;
@@ -115,9 +115,6 @@ ApicRequestGlobalInterrupt(
     /* Write the low dword last to send the interrupt */
     ApicWrite(APIC_ICR1, Icr.Long1);
     ApicWrite(APIC_ICR0, Icr.Long0);
-
-    if (!ApicWaitForIcrIdle())
-        goto DeliveryFailure;
 
     /* Finally, restore the original interrupt state */
     if (Flags & EFLAGS_INTERRUPT_MASK)

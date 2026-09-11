@@ -41,7 +41,8 @@ HalpBroadcastClockIpi(
 {
     KAFFINITY TargetSet;
 
-    /* Do not interrupt processors that have not completed HAL startup. */
-    TargetSet = HalpActiveProcessors & ~KeGetCurrentPrcb()->SetMember;
+    /* Target only APs published by both the kernel and HAL. */
+    TargetSet = HalpActiveProcessors & KeQueryActiveProcessors() &
+                ~KeGetCurrentPrcb()->SetMember;
     HalRequestIpiSpecifyVector(TargetSet, Vector);
 }
