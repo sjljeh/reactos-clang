@@ -1072,7 +1072,7 @@ static LRESULT DoNotify (const NOTIFYDATA *lpNotify, UINT uCode, LPNMHDR lpHdr)
 {
     NMHDR nmhdr;
     LPNMHDR lpNmh = NULL;
-    UINT idFrom = 0;
+    UINT_PTR idFrom = 0;
 
     TRACE("(%p %p %d %p 0x%08x)\n",
 	   lpNotify->hwndFrom, lpNotify->hwndTo, uCode, lpHdr,
@@ -1087,7 +1087,7 @@ static LRESULT DoNotify (const NOTIFYDATA *lpNotify, UINT uCode, LPNMHDR lpHdr)
     }
     else {
 	if (lpNotify->hwndFrom)
-	    idFrom = GetDlgCtrlID (lpNotify->hwndFrom);
+	    idFrom = GetWindowLongPtrW(lpNotify->hwndFrom, GWLP_ID);
 
 	lpNmh = (lpHdr) ? lpHdr : &nmhdr;
 

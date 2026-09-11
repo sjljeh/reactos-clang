@@ -533,7 +533,7 @@ REBAR_Notify (NMHDR *nmhdr, const REBAR_INFO *infoPtr, UINT code)
     HWND parent;
 
     parent = REBAR_GetNotifyParent (infoPtr);
-    nmhdr->idFrom = GetDlgCtrlID (infoPtr->hwndSelf);
+    nmhdr->idFrom = GetWindowLongPtrW(infoPtr->hwndSelf, GWLP_ID);
     nmhdr->hwndFrom = infoPtr->hwndSelf;
     nmhdr->code = code;
 

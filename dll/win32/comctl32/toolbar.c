@@ -410,7 +410,7 @@ TOOLBAR_SendNotify (NMHDR *nmhdr, const TOOLBAR_INFO *infoPtr, UINT code)
 	if(!IsWindow(infoPtr->hwndSelf))
 	    return 0;   /* we have just been destroyed */
 
-    nmhdr->idFrom = GetDlgCtrlID (infoPtr->hwndSelf);
+    nmhdr->idFrom = GetWindowLongPtrW(infoPtr->hwndSelf, GWLP_ID);
     nmhdr->hwndFrom = infoPtr->hwndSelf;
     nmhdr->code = code;
 

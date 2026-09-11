@@ -176,7 +176,7 @@ static inline cmp_func_t get_cmp_func(COMBOEX_INFO const *infoPtr)
 
 static INT COMBOEX_Notify (const COMBOEX_INFO *infoPtr, INT code, NMHDR *hdr)
 {
-    hdr->idFrom = GetDlgCtrlID (infoPtr->hwndSelf);
+    hdr->idFrom = GetWindowLongPtrW(infoPtr->hwndSelf, GWLP_ID);
     hdr->hwndFrom = infoPtr->hwndSelf;
     hdr->code = code;
     if (infoPtr->NtfUnicode)
