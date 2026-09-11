@@ -1879,15 +1879,20 @@ QSI_DEF(SystemContextSwitchInformation)
 {
     PSYSTEM_CONTEXT_SWITCH_INFORMATION ContextSwitchInformation =
         (PSYSTEM_CONTEXT_SWITCH_INFORMATION)Buffer;
+    PKI_SCHEDULER_CPU_DATA SchedulerData;
     ULONG ContextSwitches;
     PKPRCB Prcb;
-    CHAR i;
+    ULONG i;
 
     /* Check size of a buffer, it must match our expectations */
     if (sizeof(SYSTEM_CONTEXT_SWITCH_INFORMATION) != Size)
         return STATUS_INFO_LENGTH_MISMATCH;
 
-    /* Calculate total value of context switches across all processors */
+    *ReqSize = sizeof(SYSTEM_CONTEXT_SWITCH_INFORMATION);
+    RtlZeroMemory(ContextSwitchInformation,
+                  sizeof(SYSTEM_CONTEXT_SWITCH_INFORMATION));
+
+    /* Calculate total scheduler values across all processors. */
     ContextSwitches = 0;
     for (i = 0; i < KeNumberProcessors; i ++)
     {
@@ -1895,23 +1900,22 @@ QSI_DEF(SystemContextSwitchInformation)
         if (Prcb)
         {
             ContextSwitches += KeGetContextSwitches(Prcb);
+            SchedulerData = &KiSchedulerCpuData[i];
+            ContextSwitchInformation->FindAny += SchedulerData->FindAny;
+            ContextSwitchInformation->FindLast += SchedulerData->FindLast;
+            ContextSwitchInformation->FindIdeal += SchedulerData->FindIdeal;
+            ContextSwitchInformation->IdleAny += SchedulerData->IdleAny;
+            ContextSwitchInformation->IdleCurrent += SchedulerData->IdleCurrent;
+            ContextSwitchInformation->IdleLast += SchedulerData->IdleLast;
+            ContextSwitchInformation->IdleIdeal += SchedulerData->IdleIdeal;
+            ContextSwitchInformation->PreemptAny += SchedulerData->PreemptAny;
+            ContextSwitchInformation->PreemptCurrent += SchedulerData->PreemptCurrent;
+            ContextSwitchInformation->PreemptLast += SchedulerData->PreemptLast;
+            ContextSwitchInformation->SwitchToIdle += SchedulerData->SwitchToIdle;
         }
     }
 
     ContextSwitchInformation->ContextSwitches = ContextSwitches;
-
-    /* FIXME */
-    ContextSwitchInformation->FindAny = 0;
-    ContextSwitchInformation->FindLast = 0;
-    ContextSwitchInformation->FindIdeal = 0;
-    ContextSwitchInformation->IdleAny = 0;
-    ContextSwitchInformation->IdleCurrent = 0;
-    ContextSwitchInformation->IdleLast = 0;
-    ContextSwitchInformation->IdleIdeal = 0;
-    ContextSwitchInformation->PreemptAny = 0;
-    ContextSwitchInformation->PreemptCurrent = 0;
-    ContextSwitchInformation->PreemptLast = 0;
-    ContextSwitchInformation->SwitchToIdle = 0;
 
     return STATUS_SUCCESS;
 }

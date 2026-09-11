@@ -611,6 +611,8 @@ KiDispatchInterrupt(VOID)
         {
             InterlockedBitTestAndSetAffinity(&KiIdleSummary, Prcb->Number);
             Prcb->IdleSchedule = TRUE;
+            if (OldThread != Prcb->IdleThread)
+                KiSchedulerCpuData[Prcb->Number].SwitchToIdle++;
         }
         else
         {

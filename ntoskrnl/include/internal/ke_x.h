@@ -1331,9 +1331,59 @@ KxUnwaitThreadForEvent(IN PKEVENT Event,
 }
 
 //
-// This routine queues a thread that is ready on the PRCB's ready lists.
-// If this thread cannot currently run on this CPU, then the thread is
-// added to the deferred ready list instead.
+// These routines maintain a PRCB ready queue and its load accounting.
+// The caller must hold the PRCB lock on an SMP system.
+//
+FORCEINLINE
+VOID
+KiInsertReadyQueue(
+    _In_ PKPRCB Prcb,
+    _In_ PKTHREAD Thread,
+    _In_ BOOLEAN InsertHead)
+{
+    KPRIORITY Priority;
+
+#ifdef CONFIG_SMP
+    ASSERT(Prcb->PrcbLock != 0);
+#endif
+    Priority = Thread->Priority;
+    ASSERT((Priority >= 0) && (Priority <= HIGH_PRIORITY));
+
+    if (InsertHead)
+        InsertHeadList(&Prcb->DispatcherReadyListHead[Priority],
+                       &Thread->WaitListEntry);
+    else
+        InsertTailList(&Prcb->DispatcherReadyListHead[Priority],
+                       &Thread->WaitListEntry);
+
+    Prcb->ReadySummary |= PRIORITY_MASK(Priority);
+    KiSchedulerCpuData[Prcb->Number].ReadyThreadCount++;
+}
+
+FORCEINLINE
+VOID
+KiRemoveReadyQueue(
+    _In_ PKPRCB Prcb,
+    _In_ PKTHREAD Thread)
+{
+    KPRIORITY Priority;
+
+#ifdef CONFIG_SMP
+    ASSERT(Prcb->PrcbLock != 0);
+#endif
+    Priority = Thread->Priority;
+    ASSERT((Prcb->ReadySummary & PRIORITY_MASK(Priority)) != 0);
+    ASSERT(KiSchedulerCpuData[Prcb->Number].ReadyThreadCount > 0);
+
+    if (RemoveEntryList(&Thread->WaitListEntry))
+        Prcb->ReadySummary &= ~PRIORITY_MASK(Priority);
+
+    KiSchedulerCpuData[Prcb->Number].ReadyThreadCount--;
+}
+
+//
+// This routine queues a running thread on the current PRCB, or defers it
+// when its affinity no longer permits execution there.
 //
 // This routine must be entered with the PRCB lock held and it will exit
 // with the PRCB lock released!
@@ -1378,13 +1428,7 @@ KxQueueReadyThread(IN PKTHREAD Thread,
         ASSERT((Priority >= 0) && (Priority <= HIGH_PRIORITY));
 
         /* Insert this thread in the appropriate order */
-        Preempted ? InsertHeadList(&Prcb->DispatcherReadyListHead[Priority],
-                                   &Thread->WaitListEntry) :
-                    InsertTailList(&Prcb->DispatcherReadyListHead[Priority],
-                                   &Thread->WaitListEntry);
-
-        /* Update the ready summary */
-        Prcb->ReadySummary |= PRIORITY_MASK(Priority);
+        KiInsertReadyQueue(Prcb, Thread, Preempted);
 
         /* Sanity check */
         ASSERT(Priority == Thread->Priority);
@@ -1440,11 +1484,7 @@ KiSelectReadyThread(IN KPRIORITY Priority,
     ASSERT(Thread->NextProcessor == Prcb->Number);
 
     /* Remove it from the list */
-    if (RemoveEntryList(&Thread->WaitListEntry))
-    {
-        /* The list is empty now, reset the ready summary */
-        Prcb->ReadySummary ^= PRIORITY_MASK(HighPriority);
-    }
+    KiRemoveReadyQueue(Prcb, Thread);
 
     /* Sanity check and return the thread */
 Quickie:

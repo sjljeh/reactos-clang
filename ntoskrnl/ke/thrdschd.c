@@ -28,6 +28,7 @@
 
 KAFFINITY KiIdleSummary;
 KAFFINITY KiIdleSMTSummary;
+KI_SCHEDULER_CPU_DATA KiSchedulerCpuData[MAXIMUM_PROCESSORS];
 
 /* FUNCTIONS *****************************************************************/
 
@@ -130,6 +131,32 @@ KiQueueReadyThread(IN PKTHREAD Thread,
 }
 
 #ifdef CONFIG_SMP
+static
+ULONG
+KiQueryProcessorLoad(
+    _In_ PKPRCB Prcb)
+{
+    LONG ReadyCount;
+    ULONG Load;
+    PKTHREAD CurrentThread, NextThread;
+
+    /*
+     * The ready count is changed with this PRCB's lock held.  A racy snapshot
+     * is sufficient for placement: the result is a hint and is re-evaluated
+     * on every ready transition.
+     */
+    ReadyCount = KiSchedulerCpuData[Prcb->Number].ReadyThreadCount;
+    Load = (ReadyCount > 0) ? (ULONG)ReadyCount : 0;
+
+    CurrentThread = Prcb->CurrentThread;
+    if (CurrentThread && (CurrentThread != Prcb->IdleThread)) Load++;
+
+    NextThread = Prcb->NextThread;
+    if (NextThread && (NextThread != Prcb->IdleThread)) Load++;
+
+    return Load;
+}
+
 ULONG
 NTAPI
 KiFindIdealProcessor(
@@ -185,8 +212,11 @@ ULONG
 KiSelectNextProcessor(
     _In_ PKTHREAD Thread)
 {
-    KAFFINITY PreferredSet, IdleSet;
-    ULONG Processor;
+    PKI_SCHEDULER_CPU_DATA SchedulerData;
+    KAFFINITY PreferredSet, IdleSet, ScanSet;
+    ULONG Processor, CurrentProcessor, LastProcessor, IdealProcessor;
+    ULONG Load, LowestLoad, LowestProcessor;
+    BOOLEAN HasLastProcessor;
 
     /* Start with the affinity, restricted to online processors. */
     PreferredSet = Thread->Affinity & KeActiveProcessors;
@@ -199,27 +229,117 @@ KiSelectNextProcessor(
                      0);
     }
 
-    /* If we have matching idle processors, use them */
+    CurrentProcessor = KeGetCurrentProcessorNumber();
+    SchedulerData = &KiSchedulerCpuData[CurrentProcessor];
+    LastProcessor = Thread->NextProcessor;
+    IdealProcessor = Thread->IdealProcessor;
+    HasLastProcessor = (Thread->ContextSwitches != 0) &&
+                       (LastProcessor < MAXIMUM_PROCESSORS) &&
+                       ((PreferredSet & AFFINITY_MASK(LastProcessor)) != 0);
+
+    /* Prefer an idle CPU without discarding established cache affinity. */
     IdleSet = PreferredSet & KiIdleSummary;
     if (IdleSet != 0)
     {
-        PreferredSet = IdleSet;
+        if (HasLastProcessor &&
+            (IdleSet & AFFINITY_MASK(LastProcessor)))
+        {
+            SchedulerData->IdleLast++;
+            return LastProcessor;
+        }
+
+        if ((IdealProcessor < MAXIMUM_PROCESSORS) &&
+            (IdleSet & AFFINITY_MASK(IdealProcessor)))
+        {
+            SchedulerData->IdleIdeal++;
+            return IdealProcessor;
+        }
+
+        if (IdleSet & AFFINITY_MASK(CurrentProcessor))
+        {
+            SchedulerData->IdleCurrent++;
+            return CurrentProcessor;
+        }
+
+        NT_VERIFY(BitScanForwardAffinity(&Processor, IdleSet) != FALSE);
+        SchedulerData->IdleAny++;
+        return Processor;
     }
 
-    /* Check if we can use the ideal processor */
-    if (PreferredSet & AFFINITY_MASK(Thread->IdealProcessor))
+    /* Find the least loaded allowed CPU. */
+    LowestLoad = MAXULONG;
+    LowestProcessor = MAXULONG;
+    ScanSet = PreferredSet;
+    while (ScanSet)
     {
-        return Thread->IdealProcessor;
+        NT_VERIFY(BitScanForwardAffinity(&Processor, ScanSet) != FALSE);
+        ScanSet &= ~AFFINITY_MASK(Processor);
+
+        Load = KiQueryProcessorLoad(KiProcessorBlock[Processor]);
+        if (Load < LowestLoad)
+        {
+            LowestLoad = Load;
+            LowestProcessor = Processor;
+        }
     }
 
-    /* Return the first set bit */
-    NT_VERIFY(BitScanForwardAffinity(&Processor, PreferredSet) != FALSE);
-    ASSERT(Processor < KeNumberProcessors);
+    ASSERT(LowestProcessor < KeNumberProcessors);
 
-    return Processor;
+    /*
+     * A difference of one runnable thread is deliberately tolerated.  Avoiding
+     * a cold migration is normally worth one turn through a local ready queue;
+     * larger imbalance is not.  The ideal processor remains a hint, not a
+     * binding constraint.
+     */
+    if (HasLastProcessor &&
+        (KiQueryProcessorLoad(KiProcessorBlock[LastProcessor]) <=
+         LowestLoad + 1))
+    {
+        SchedulerData->FindLast++;
+        return LastProcessor;
+    }
+
+    if ((IdealProcessor < MAXIMUM_PROCESSORS) &&
+        (PreferredSet & AFFINITY_MASK(IdealProcessor)) &&
+        (KiQueryProcessorLoad(KiProcessorBlock[IdealProcessor]) <=
+         LowestLoad + 1))
+    {
+        SchedulerData->FindIdeal++;
+        return IdealProcessor;
+    }
+
+    SchedulerData->FindAny++;
+    return LowestProcessor;
 }
 #else
 #define KiSelectNextProcessor(Thread) 0
+#endif
+
+#ifdef CONFIG_SMP
+static
+VOID
+KiCountPreemption(
+    _In_ PKTHREAD Thread,
+    _In_ ULONG Processor,
+    _In_ ULONG LastProcessor)
+{
+    PKI_SCHEDULER_CPU_DATA SchedulerData;
+
+    SchedulerData = &KiSchedulerCpuData[KeGetCurrentProcessorNumber()];
+    if (Processor == KeGetCurrentProcessorNumber())
+    {
+        SchedulerData->PreemptCurrent++;
+    }
+    else if ((Thread->ContextSwitches != 0) &&
+             (Processor == LastProcessor))
+    {
+        SchedulerData->PreemptLast++;
+    }
+    else
+    {
+        SchedulerData->PreemptAny++;
+    }
+}
 #endif
 
 VOID
@@ -231,6 +351,9 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
     ULONG Processor;
     KPRIORITY OldPriority;
     PKTHREAD NextThread;
+#ifdef CONFIG_SMP
+    ULONG LastProcessor;
+#endif
 
     /* Sanity checks */
     ASSERT(Thread->State == DeferredReady);
@@ -377,6 +500,9 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
     Thread->Preempted = FALSE;
 
     /* Select a processor to run on */
+#ifdef CONFIG_SMP
+    LastProcessor = Thread->NextProcessor;
+#endif
     Processor = KiSelectNextProcessor(Thread);
     Thread->NextProcessor = Processor;
 
@@ -409,6 +535,9 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
         /* Check if priority changed */
         if (OldPriority > NextThread->Priority)
         {
+#ifdef CONFIG_SMP
+            KiCountPreemption(Thread, Processor, LastProcessor);
+#endif
             /* Preempt the thread */
             NextThread->Preempted = TRUE;
 
@@ -434,6 +563,9 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
         NextThread = Prcb->CurrentThread;
         if (OldPriority > NextThread->Priority)
         {
+#ifdef CONFIG_SMP
+            KiCountPreemption(Thread, Processor, LastProcessor);
+#endif
             /* Preempt it if it's already running */
             if (NextThread->State == Running) NextThread->Preempted = TRUE;
 
@@ -466,13 +598,7 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
     Thread->WaitTime = KeTickCount.LowPart;
 
     /* Insert this thread in the appropriate order */
-    Preempted ? InsertHeadList(&Prcb->DispatcherReadyListHead[OldPriority],
-                               &Thread->WaitListEntry) :
-                InsertTailList(&Prcb->DispatcherReadyListHead[OldPriority],
-                               &Thread->WaitListEntry);
-
-    /* Update the ready summary */
-    Prcb->ReadySummary |= PRIORITY_MASK(OldPriority);
+    KiInsertReadyQueue(Prcb, Thread, Preempted);
 
     /* Sanity check */
     ASSERT(OldPriority == Thread->Priority);
@@ -553,6 +679,7 @@ KiSwapThread(IN PKTHREAD CurrentThread,
             NextThread = Prcb->IdleThread;
             Prcb->CurrentThread = NextThread;
             NextThread->State = Running;
+            KiSchedulerCpuData[Prcb->Number].SwitchToIdle++;
         }
     }
 
@@ -722,12 +849,7 @@ KiSetPriorityThread(IN PKTHREAD Thread,
                                 PRIORITY_MASK(Thread->Priority)));
 
                         /* Remove it from the current queue */
-                        if (RemoveEntryList(&Thread->WaitListEntry))
-                        {
-                            /* Update the ready summary */
-                            Prcb->ReadySummary ^= PRIORITY_MASK(Thread->
-                                                                Priority);
-                        }
+                        KiRemoveReadyQueue(Prcb, Thread);
 
                         /* Update priority */
                         Thread->Priority = (SCHAR)Priority;
@@ -909,11 +1031,7 @@ KiUpdateEffectiveAffinityThread(
         else if (Thread->State == Ready)
         {
             /* Remove it from the list */
-            if (RemoveEntryList(&Thread->WaitListEntry))
-            {
-                /* The list is empty now, reset the ready summary */
-                Prcb->ReadySummary &= ~PRIORITY_MASK(Thread->Priority);
-            }
+            KiRemoveReadyQueue(Prcb, Thread);
 
             /* Insert the thread back into the ready list */
             KiInsertDeferredReadyList(Thread);

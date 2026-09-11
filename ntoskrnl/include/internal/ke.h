@@ -75,6 +75,29 @@ typedef struct _DPC_QUEUE_ENTRY
     PVOID Context;
 } DPC_QUEUE_ENTRY, *PDPC_QUEUE_ENTRY;
 
+/*
+ * Per-processor scheduler state which is not part of the public KPRCB layout.
+ * Keep each entry on a separate cache line: ready-queue activity is inherently
+ * processor local and must not make adjacent processors contend for this data.
+ */
+typedef struct DECLSPEC_CACHEALIGN _KI_SCHEDULER_CPU_DATA
+{
+    volatile LONG ReadyThreadCount;
+    volatile ULONG FindAny;
+    volatile ULONG FindLast;
+    volatile ULONG FindIdeal;
+    volatile ULONG IdleAny;
+    volatile ULONG IdleCurrent;
+    volatile ULONG IdleLast;
+    volatile ULONG IdleIdeal;
+    volatile ULONG PreemptAny;
+    volatile ULONG PreemptCurrent;
+    volatile ULONG PreemptLast;
+    volatile ULONG SwitchToIdle;
+} KI_SCHEDULER_CPU_DATA, *PKI_SCHEDULER_CPU_DATA;
+
+C_ASSERT((sizeof(KI_SCHEDULER_CPU_DATA) % SYSTEM_CACHE_ALIGNMENT_SIZE) == 0);
+
 typedef struct _KNMI_HANDLER_CALLBACK
 {
     struct _KNMI_HANDLER_CALLBACK* Next;
@@ -143,6 +166,7 @@ extern LIST_ENTRY KiProcessInSwapListHead, KiProcessOutSwapListHead;
 extern LIST_ENTRY KiStackInSwapListHead;
 extern KEVENT KiSwapEvent;
 extern KAFFINITY KiIdleSummary;
+extern KI_SCHEDULER_CPU_DATA KiSchedulerCpuData[MAXIMUM_PROCESSORS];
 extern PVOID KeUserApcDispatcher;
 extern PVOID KeUserCallbackDispatcher;
 extern PVOID KeUserExceptionDispatcher;

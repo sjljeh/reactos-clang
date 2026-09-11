@@ -73,12 +73,7 @@ KiScanReadyQueues(IN PKDPC Dpc,
                     {
                         /* Remove the thread from the queue */
                         NextEntry = NextEntry->Blink;
-                        ASSERT((Prcb->ReadySummary & PRIORITY_MASK(Index)));
-                        if (RemoveEntryList(NextEntry->Flink))
-                        {
-                            /* The list is empty now */
-                            Prcb->ReadySummary ^= PRIORITY_MASK(Index);
-                        }
+                        KiRemoveReadyQueue(Prcb, Thread);
 
                         /* Verify priority decrement and set the new one */
                         ASSERT((Thread->PriorityDecrement >= 0) &&
