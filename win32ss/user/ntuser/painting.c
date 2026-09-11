@@ -1769,11 +1769,9 @@ NtUserEndPaint(HWND hWnd, CONST PAINTSTRUCT* pUnsafePs)
 
    UserRefObjectCo(Window, &Ref);
 
-   /* DCE teardown has its own lock and the reference keeps the window alive.
-    * Reacquire USER shared only to commit the window paint flags. */
-   UserLeave();
+   /* DCE teardown has its own lock, but visible-region restoration samples
+    * window properties and hierarchy state under shared USER ownership. */
    UserReleaseDC(Window, Ps.hdc, TRUE);
-   UserEnterShared();
    IntCompletePaintState(Window);
    Ret = TRUE;
 

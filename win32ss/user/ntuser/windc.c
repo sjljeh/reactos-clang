@@ -396,6 +396,7 @@ DceUpdateVisRgn(DCE *Dce, PWND Window, ULONG Flags)
 {
    PREGION RgnVisible;
 
+   ASSERT(UserIsEntered());
    RgnVisible = DceCalculateVisRgn(Dce, Window, Flags, NULL);
 
    Dce->DCXFlags &= ~DCX_DCEDIRTY;
