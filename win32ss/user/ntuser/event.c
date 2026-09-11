@@ -20,6 +20,17 @@ static PEVENTTABLE GlobalEvents = NULL;
 
 /* PRIVATE FUNCTIONS *********************************************************/
 
+VOID
+FASTCALL
+IntFreeEventPack(
+    _In_ LONG_PTR ExtraInfo)
+{
+   PEVENTPACK pEP = (PEVENTPACK)ExtraInfo;
+
+   UserDereferenceObject(pEP->pEH);
+   ExFreePoolWithTag(pEP, TAG_HOOK);
+}
+
 static
 DWORD
 FASTCALL
@@ -118,7 +129,9 @@ IntCallLowLevelEvent( PEVENTHOOK pEH,
    Msg.lParam = POSTEVENT_NWE;
    Msg.time = 0;
 
-   MsqPostMessage(pEH->head.pti, &Msg, FALSE, QS_EVENT, POSTEVENT_NWE, (LONG_PTR)pEP);
+   UserReferenceObject(pEH);
+   if (!MsqPostMessage(pEH->head.pti, &Msg, FALSE, QS_EVENT, POSTEVENT_NWE, (LONG_PTR)pEP))
+      IntFreeEventPack((LONG_PTR)pEP);
    return 0;
 }
 
@@ -169,7 +182,7 @@ co_EVENT_CallEvents( DWORD event,
                                  pEH->ihmod,
                                  pEH->offPfn);
 
-   ExFreePoolWithTag(pEP, TAG_HOOK);
+   IntFreeEventPack((LONG_PTR)pEP);
    return Result;
 }
 

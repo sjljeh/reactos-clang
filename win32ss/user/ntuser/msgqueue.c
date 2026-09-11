@@ -1333,7 +1333,7 @@ co_MsqSendMessage(PTHREADINFO ptirec,
    return WaitStatus;
 }
 
-VOID FASTCALL
+BOOL FASTCALL
 MsqPostMessage(PTHREADINFO pti,
                MSG* Msg,
                BOOLEAN HardwareMessage,
@@ -1349,12 +1349,12 @@ MsqPostMessage(PTHREADINFO pti,
    if ((pti->TIF_flags & TIF_INCLEANUP) || (MessageQueue->QF_flags & QF_INDESTROY))
    {
       ERR("Post Msg; Thread or Q is Dead!\n");
-      return;
+      return FALSE;
    }
 
    Message = MsqCreateMessage(Msg);
    if (!Message)
-      return;
+      return FALSE;
 
    if (Msg->message == WM_HOTKEY)
       MessageBits |= QS_HOTKEY;
@@ -1375,6 +1375,7 @@ MsqPostMessage(PTHREADINFO pti,
 
    MsqWakeQueue(pti, MessageBits, TRUE);
    TRACE("Post Message %d\n", PostMsgCount);
+   return TRUE;
 }
 
 VOID FASTCALL
@@ -2252,10 +2253,10 @@ MsqCleanupThreadMsgs(PTHREADINFO pti)
       ERR("Thread Cleanup Post Messages %p\n",CurrentMessage);
       if (CurrentMessage->dwQEvent)
       {
-         if (CurrentMessage->dwQEvent == POSTEVENT_NWE)
-         {
-            ExFreePoolWithTag( (PVOID)CurrentMessage->ExtraInfo, TAG_HOOK);
-         }
+          if (CurrentMessage->dwQEvent == POSTEVENT_NWE)
+          {
+             IntFreeEventPack(CurrentMessage->ExtraInfo);
+          }
       }
       MsqDestroyMessage(CurrentMessage);
    }
