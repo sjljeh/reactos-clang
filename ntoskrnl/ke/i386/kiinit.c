@@ -338,6 +338,7 @@ KiInitializePcr(IN ULONG ProcessorNumber,
 
     /* Setup the processor set */
     Pcr->PrcbData.MultiThreadProcessorSet = Pcr->PrcbData.SetMember;
+    Pcr->PrcbData.MultiThreadSetMaster = &Pcr->PrcbData;
 }
 
 static
@@ -495,7 +496,8 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
 
     /* Set Node Data */
     Prcb->ParentNode = KeNodeBlock[0];
-    Prcb->ParentNode->ProcessorMask |= Prcb->SetMember;
+    InterlockedOr((PLONG)&Prcb->ParentNode->ProcessorMask,
+                  (LONG)Prcb->SetMember);
 
     /* Check if this is the Boot CPU */
     if (!Number)
@@ -553,7 +555,8 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
     InitThread->State = Running;
     InitThread->Affinity = 1 << Number;
     InitThread->WaitIrql = DISPATCH_LEVEL;
-    InitProcess->ActiveProcessors |= 1 << Number;
+    InterlockedOr((PLONG)&InitProcess->ActiveProcessors,
+                  (LONG)Prcb->SetMember);
 
     /* HACK for MmUpdatePageDir */
     ((PETHREAD)InitThread)->ThreadsProcess = (PEPROCESS)InitProcess;
@@ -632,7 +635,8 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
 
     /* If there's no thread scheduled, put this CPU in the Idle summary */
     KiAcquirePrcbLock(Prcb);
-    if (!Prcb->NextThread) KiIdleSummary |= 1 << Number;
+    if (!Prcb->NextThread)
+        InterlockedOr((PLONG)&KiIdleSummary, (LONG)Prcb->SetMember);
     KiReleasePrcbLock(Prcb);
 
     /* Raise back to HIGH_LEVEL and clear the PRCB for the loader block */
@@ -847,7 +851,8 @@ AppCpuInit:
     HalInitializeProcessor(Cpu, KeLoaderBlock);
 
     /* Set active processors */
-    KeActiveProcessors |= __readfsdword(KPCR_SET_MEMBER);
+    InterlockedOr((PLONG)&KeActiveProcessors,
+                  (LONG)__readfsdword(KPCR_SET_MEMBER));
     KeNumberProcessors++;
 
     /* Allow the next processor to perform its serialized initialization. */
