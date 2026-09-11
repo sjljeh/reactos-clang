@@ -454,7 +454,7 @@ KiInitializeTSS(
 
 BOOLEAN
 KiProcessorFreezeHandler(
-    _In_ PKTRAP_FRAME TrapFrame,
+    _In_opt_ PKTRAP_FRAME TrapFrame,
     _In_opt_ PKEXCEPTION_FRAME ExceptionFrame);
 
 VOID

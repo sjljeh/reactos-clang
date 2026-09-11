@@ -1092,7 +1092,11 @@ KeBugCheckWithTf(IN ULONG BugCheckCode,
         KeBugCheckOwner = Prcb->Number;
 
         /* Freeze the other CPUs */
+#if defined(_M_IX86)
+        KxFreezeExecution(TrapFrame, NULL);
+#else
         KxFreezeExecution();
+#endif
 #endif
 
         /* Display the BSOD */

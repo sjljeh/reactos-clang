@@ -50,7 +50,11 @@ KeFreezeExecution(IN PKTRAP_FRAME TrapFrame,
 
 #ifdef CONFIG_SMP
     /* Architecture specific freeze code */
+#if defined(_M_IX86)
+    KxFreezeExecution(TrapFrame, ExceptionFrame);
+#else
     KxFreezeExecution();
+#endif
 #endif
 
     /* Save the old IRQL to be restored on unfreeze */

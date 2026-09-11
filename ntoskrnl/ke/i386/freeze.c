@@ -18,7 +18,7 @@ PKPRCB KiFreezeOwner;
 
 BOOLEAN
 KiProcessorFreezeHandler(
-    _In_ PKTRAP_FRAME TrapFrame,
+    _In_opt_ PKTRAP_FRAME TrapFrame,
     _In_opt_ PKEXCEPTION_FRAME ExceptionFrame)
 {
     PKPRCB CurrentPrcb = KeGetCurrentPrcb();
@@ -26,8 +26,12 @@ KiProcessorFreezeHandler(
     if (CurrentPrcb->IpiFrozen != IPI_FROZEN_STATE_TARGET_FREEZE)
         return FALSE;
 
-    /* Capture a complete, debugger-visible state before acknowledging. */
-    KiSaveProcessorState(TrapFrame, ExceptionFrame);
+    /*
+     * Capture a complete, debugger-visible state before acknowledging. The
+     * bugcheck path has already captured ProcessorState and has no trap frame.
+     */
+    if (TrapFrame != NULL)
+        KiSaveProcessorState(TrapFrame, ExceptionFrame);
     KeMemoryBarrier();
     InterlockedExchange((PLONG)&CurrentPrcb->IpiFrozen,
                         IPI_FROZEN_STATE_FROZEN);
@@ -55,8 +59,11 @@ KiProcessorFreezeHandler(
         KeMemoryBarrierWithoutFence();
     }
 
-    KiRestoreProcessorState(TrapFrame, ExceptionFrame);
-    KeFlushCurrentTb();
+    if (TrapFrame != NULL)
+    {
+        KiRestoreProcessorState(TrapFrame, ExceptionFrame);
+        KeFlushCurrentTb();
+    }
 
     InterlockedExchange((PLONG)&CurrentPrcb->IpiFrozen,
                         IPI_FROZEN_STATE_RUNNING);
@@ -65,7 +72,9 @@ KiProcessorFreezeHandler(
 
 VOID
 NTAPI
-KxFreezeExecution(VOID)
+KxFreezeExecution(
+    _In_opt_ PKTRAP_FRAME TrapFrame,
+    _In_opt_ PKEXCEPTION_FRAME ExceptionFrame)
 {
     PKPRCB CurrentPrcb = KeGetCurrentPrcb();
     PKPRCB TargetPrcb;
@@ -83,6 +92,20 @@ KxFreezeExecution(VOID)
     {
         while (KiFreezeOwner != NULL)
         {
+            /*
+             * A concurrent debugger entry can reach this point at HIGH_LEVEL
+             * with interrupts disabled. If the current freeze owner selects
+             * us as a target, the freeze IPI cannot interrupt this spin. Join
+             * the owner's freeze directly so that it can make progress, then
+             * retry our own debugger entry after it thaws us.
+             */
+            if (CurrentPrcb->IpiFrozen == IPI_FROZEN_STATE_TARGET_FREEZE)
+            {
+                NT_VERIFY(KiProcessorFreezeHandler(TrapFrame,
+                                                   ExceptionFrame));
+                continue;
+            }
+
             YieldProcessor();
             KeMemoryBarrierWithoutFence();
         }

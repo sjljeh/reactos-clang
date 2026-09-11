@@ -971,7 +971,12 @@ KiInitMachineDependent(VOID);
 VOID
 NTAPI
 KxFreezeExecution(
+#if defined(_M_IX86)
+    _In_opt_ PKTRAP_FRAME TrapFrame,
+    _In_opt_ PKEXCEPTION_FRAME ExceptionFrame);
+#else
     VOID);
+#endif
 
 VOID
 NTAPI

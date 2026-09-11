@@ -250,7 +250,12 @@ KiIpiServiceRoutine(IN PKTRAP_FRAME TrapFrame,
     {
         if (RequestSummary & IPI_FREEZE)
         {
-            NT_VERIFY(KiProcessorFreezeHandler(TrapFrame, ExceptionFrame));
+            /*
+             * A concurrent debugger entrant can observe TARGET_FREEZE and
+             * join the freeze before the corresponding IPI is delivered.
+             * Its delayed request is then stale and needs no further action.
+             */
+            (VOID)KiProcessorFreezeHandler(TrapFrame, ExceptionFrame);
         }
 
         if (RequestSummary & IPI_APC)
