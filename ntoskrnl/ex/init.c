@@ -1597,6 +1597,11 @@ Phase1InitializationDiscard(IN PVOID Context)
 
     /* Start Application Processors */
     KeStartAllProcessors();
+
+    /* The System process was created from the BSP-only affinity inherited
+     * before AP startup. Expand it now, before worker and manager threads are
+     * created, so ordinary kernel work is not permanently pinned to CPU 0. */
+    KeSetAffinityProcess(&PsInitialSystemProcess->Pcb, KeActiveProcessors);
 #endif
 
     /* Initialize all processors */

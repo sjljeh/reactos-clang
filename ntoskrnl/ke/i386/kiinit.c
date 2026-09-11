@@ -540,6 +540,16 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
         DPRINT1("Starting CPU#%u - you are brave\n", Number);
     }
 
+    /* The idle process was initialized while only the BSP was active. Expand
+     * its process mask before initializing each AP's idle thread. */
+#ifdef CONFIG_SMP
+    if (Number != 0)
+    {
+        InterlockedOr((PLONG)&InitProcess->Affinity,
+                      (LONG)Prcb->SetMember);
+    }
+#endif
+
     /* Setup the Idle Thread */
     KeInitializeThread(InitProcess,
                        InitThread,
@@ -552,7 +562,10 @@ KiInitializeKernel(IN PKPROCESS InitProcess,
     InitThread->NextProcessor = Number;
     InitThread->Priority = HIGH_PRIORITY;
     InitThread->State = Running;
-    InitThread->Affinity = 1 << Number;
+    InitThread->Affinity = Prcb->SetMember;
+    InitThread->UserAffinity = Prcb->SetMember;
+    InitThread->IdealProcessor = Number;
+    InitThread->UserIdealProcessor = Number;
     InitThread->WaitIrql = DISPATCH_LEVEL;
     InterlockedOr((PLONG)&InitProcess->ActiveProcessors,
                   (LONG)Prcb->SetMember);
