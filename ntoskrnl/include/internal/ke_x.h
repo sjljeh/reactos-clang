@@ -457,6 +457,14 @@ KiAcquirePrcbLock(IN PKPRCB Prcb)
     }
 }
 
+FORCEINLINE
+BOOLEAN
+KiTryAcquirePrcbLock(IN PKPRCB Prcb)
+{
+    ASSERT(KeGetCurrentIrql() >= DISPATCH_LEVEL);
+    return InterlockedCompareExchange((PLONG)&Prcb->PrcbLock, 1, 0) == 0;
+}
+
 //
 // This routine releases the PRCB lock so that other callers can touch
 // volatile PRCB data.

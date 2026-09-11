@@ -32,6 +32,133 @@ KI_SCHEDULER_CPU_DATA KiSchedulerCpuData[MAXIMUM_PROCESSORS];
 
 /* FUNCTIONS *****************************************************************/
 
+#ifdef CONFIG_SMP
+#define KI_MAXIMUM_STEAL_SCAN 32
+
+static
+PKTHREAD
+KiFindStealableThread(
+    _In_ PKPRCB SourcePrcb,
+    _In_ ULONG TargetProcessor)
+{
+    ULONG Summary, Priority, ScanCount;
+    PLIST_ENTRY ListHead, ListEntry;
+    PKTHREAD Thread;
+
+    ASSERT(SourcePrcb->PrcbLock != 0);
+    Summary = SourcePrcb->ReadySummary;
+    ScanCount = 0;
+
+    /* Preserve normal priority ordering while looking for legal affinity. */
+    while (Summary)
+    {
+        NT_VERIFY(BitScanReverse(&Priority, Summary) != FALSE);
+        ListHead = &SourcePrcb->DispatcherReadyListHead[Priority];
+
+        for (ListEntry = ListHead->Flink;
+             ListEntry != ListHead;
+             ListEntry = ListEntry->Flink)
+        {
+            Thread = CONTAINING_RECORD(ListEntry, KTHREAD, WaitListEntry);
+            ASSERT(Thread->State == Ready);
+            ASSERT(Thread->NextProcessor == SourcePrcb->Number);
+
+            if (Thread->Affinity & AFFINITY_MASK(TargetProcessor))
+            {
+                KiRemoveReadyQueue(SourcePrcb, Thread);
+                return Thread;
+            }
+
+            /* Keep idle-side balancing work bounded under pinned load. */
+            if (++ScanCount == KI_MAXIMUM_STEAL_SCAN) return NULL;
+        }
+
+        Summary &= ~PRIORITY_MASK(Priority);
+    }
+
+    return NULL;
+}
+
+static
+BOOLEAN
+KiStealReadyThread(
+    _In_ PKPRCB TargetPrcb)
+{
+    KAFFINITY CandidateSet, ScanSet;
+    PKPRCB SourcePrcb;
+    PKTHREAD Thread;
+    LONG ReadyCount, HighestReadyCount;
+    ULONG Processor, SourceProcessor;
+
+    ASSERT(TargetPrcb == KeGetCurrentPrcb());
+    ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
+    ASSERT(TargetPrcb->CurrentThread == TargetPrcb->IdleThread);
+
+    Thread = NULL;
+    CandidateSet = KeActiveProcessors & ~TargetPrcb->SetMember;
+    while (CandidateSet)
+    {
+        /* Pick the queue with the most immediately transferable work. */
+        SourceProcessor = MAXULONG;
+        HighestReadyCount = 0;
+        ScanSet = CandidateSet;
+        while (ScanSet)
+        {
+            NT_VERIFY(BitScanForwardAffinity(&Processor, ScanSet) != FALSE);
+            ScanSet &= ~AFFINITY_MASK(Processor);
+
+            ReadyCount = KiSchedulerCpuData[Processor].ReadyThreadCount;
+            if (ReadyCount > HighestReadyCount)
+            {
+                HighestReadyCount = ReadyCount;
+                SourceProcessor = Processor;
+            }
+        }
+
+        if (SourceProcessor == MAXULONG) return FALSE;
+        CandidateSet &= ~AFFINITY_MASK(SourceProcessor);
+        SourcePrcb = KiProcessorBlock[SourceProcessor];
+
+        /*
+         * Never make an idle CPU wait on a busy run-queue lock.  Holding the
+         * target lock closes the gap while a ready thread changes queues.
+         */
+        if (!KiTryAcquirePrcbLock(TargetPrcb)) return FALSE;
+        if (TargetPrcb->NextThread ||
+            TargetPrcb->ReadySummary ||
+            (TargetPrcb->CurrentThread != TargetPrcb->IdleThread))
+        {
+            KiReleasePrcbLock(TargetPrcb);
+            return FALSE;
+        }
+
+        if (!KiTryAcquirePrcbLock(SourcePrcb))
+        {
+            KiReleasePrcbLock(TargetPrcb);
+            continue;
+        }
+
+        Thread = KiFindStealableThread(SourcePrcb, TargetPrcb->Number);
+        if (Thread)
+        {
+            Thread->NextProcessor = TargetPrcb->Number;
+            Thread->State = Standby;
+            TargetPrcb->NextThread = Thread;
+            TargetPrcb->IdleSchedule = FALSE;
+            InterlockedAndSetMember(&KiIdleSummary, ~TargetPrcb->SetMember);
+            KiSchedulerCpuData[TargetPrcb->Number].FindAny++;
+        }
+
+        KiReleasePrcbLock(SourcePrcb);
+        KiReleasePrcbLock(TargetPrcb);
+
+        if (Thread) return TRUE;
+    }
+
+    return FALSE;
+}
+#endif
+
 PKTHREAD
 FASTCALL
 KiIdleSchedule(IN PKPRCB Prcb)
@@ -63,6 +190,23 @@ KiIdleSchedule(IN PKPRCB Prcb)
     /* Otherwise, consume work queued on this processor. */
     if (!Thread)
         Thread = KiSelectReadyThread(0, Prcb);
+
+#ifdef CONFIG_SMP
+    /* Pull queued work before committing this processor to another idle pass. */
+    if (!Thread)
+    {
+        KiReleasePrcbLock(Prcb);
+        KiStealReadyThread(Prcb);
+        KiAcquirePrcbLock(Prcb);
+
+        /* A remote ready or the steal may have supplied local work. */
+        Thread = Prcb->NextThread;
+        if (Thread)
+            Prcb->NextThread = NULL;
+        else
+            Thread = KiSelectReadyThread(0, Prcb);
+    }
+#endif
 
     if (Thread == IdleThread)
     {
