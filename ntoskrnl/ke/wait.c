@@ -332,6 +332,13 @@ KeDelayExecutionThread(IN KPROCESSOR_MODE WaitMode,
         if ((Thread->ApcState.KernelApcPending) && !(Thread->SpecialApcDisable) &&
             (Thread->WaitIrql < APC_LEVEL))
         {
+            /*
+             * An APC which unwoke this thread need not have requested a
+             * software interrupt. Rearm delivery before dropping to the wait
+             * IRQL, otherwise this retry can spin with KernelApcPending set.
+             */
+            HalRequestSoftwareInterrupt(APC_LEVEL);
+
             /* Unlock the dispatcher */
             KiReleaseDispatcherLock(Thread->WaitIrql);
         }
@@ -455,6 +462,13 @@ KeWaitForSingleObject(IN PVOID Object,
         if ((Thread->ApcState.KernelApcPending) && !(Thread->SpecialApcDisable) &&
             (Thread->WaitIrql < APC_LEVEL))
         {
+            /*
+             * An APC which unwoke this thread need not have requested a
+             * software interrupt. Rearm delivery before dropping to the wait
+             * IRQL, otherwise this retry can spin with KernelApcPending set.
+             */
+            HalRequestSoftwareInterrupt(APC_LEVEL);
+
             /* Unlock the dispatcher */
             KiReleaseDispatcherLock(Thread->WaitIrql);
         }
@@ -662,6 +676,13 @@ KeWaitForMultipleObjects(IN ULONG Count,
         if ((Thread->ApcState.KernelApcPending) && !(Thread->SpecialApcDisable) &&
             (Thread->WaitIrql < APC_LEVEL))
         {
+            /*
+             * An APC which unwoke this thread need not have requested a
+             * software interrupt. Rearm delivery before dropping to the wait
+             * IRQL, otherwise this retry can spin with KernelApcPending set.
+             */
+            HalRequestSoftwareInterrupt(APC_LEVEL);
+
             /* Unlock the dispatcher */
             KiReleaseDispatcherLock(Thread->WaitIrql);
         }
