@@ -6279,6 +6279,23 @@ NtUserDrawMenuBarTemp(
    NTSTATUS Status = STATUS_SUCCESS;
    DWORD Ret = 0;
 
+   _SEH2_TRY
+   {
+      ProbeForRead(pRect, sizeof(RECT), sizeof(ULONG));
+      RtlCopyMemory(&Rect, pRect, sizeof(RECT));
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
+
+   if (!NT_SUCCESS(Status))
+   {
+      SetLastNtError(Status);
+      return 0;
+   }
+
    ERR("Enter NtUserDrawMenuBarTemp\n");
    UserEnterExclusive();
 
@@ -6291,23 +6308,6 @@ NtUserDrawMenuBarTemp(
    if(!(Menu = UserGetMenuObject(hMenu)))
    {
       EngSetLastError(ERROR_INVALID_MENU_HANDLE);
-      goto Exit; // Return 0
-   }
-
-   _SEH2_TRY
-   {
-      ProbeForRead(pRect, sizeof(RECT), sizeof(ULONG));
-      RtlCopyMemory(&Rect, pRect, sizeof(RECT));
-   }
-   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
-   {
-      Status = _SEH2_GetExceptionCode();
-   }
-   _SEH2_END;
-
-   if (Status != STATUS_SUCCESS)
-   {
-      SetLastNtError(Status);
       goto Exit; // Return 0
    }
 

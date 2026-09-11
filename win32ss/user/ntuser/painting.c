@@ -1687,6 +1687,7 @@ NtUserBeginPaint(HWND hWnd, PAINTSTRUCT* UnsafePs)
    HDC hDC;
    USER_REFERENCE_ENTRY Ref;
    HDC Ret = NULL;
+   BOOL CopyPs = FALSE;
 
    TRACE("Enter NtUserBeginPaint\n");
    UserEnterExclusive();
@@ -1699,21 +1700,25 @@ NtUserBeginPaint(HWND hWnd, PAINTSTRUCT* UnsafePs)
    UserRefObjectCo(Window, &Ref);
 
    hDC = IntBeginPaint(Window, &Ps);
-
-   Status = MmCopyToCaller(UnsafePs, &Ps, sizeof(PAINTSTRUCT));
-   if (! NT_SUCCESS(Status))
-   {
-      SetLastNtError(Status);
-      goto Cleanup; // Return NULL
-   }
-
+   CopyPs = TRUE;
    Ret = hDC;
 
 Cleanup:
    if (Window) UserDerefObjectCo(Window);
 
-   TRACE("Leave NtUserBeginPaint, ret=%p\n", Ret);
    UserLeave();
+
+   if (CopyPs)
+   {
+      Status = MmCopyToCaller(UnsafePs, &Ps, sizeof(PAINTSTRUCT));
+      if (!NT_SUCCESS(Status))
+      {
+         SetLastNtError(Status);
+         Ret = NULL;
+      }
+   }
+
+   TRACE("Leave NtUserBeginPaint, ret=%p\n", Ret);
    return Ret;
 }
 
@@ -1733,16 +1738,6 @@ NtUserEndPaint(HWND hWnd, CONST PAINTSTRUCT* pUnsafePs)
    USER_REFERENCE_ENTRY Ref;
    BOOL Ret = FALSE;
 
-   TRACE("Enter NtUserEndPaint\n");
-   UserEnterExclusive();
-
-   if (!(Window = UserGetWindowObject(hWnd)))
-   {
-      goto Cleanup; // Return FALSE
-   }
-
-   UserRefObjectCo(Window, &Ref); // Here for the exception.
-
    _SEH2_TRY
    {
       ProbeForRead(pUnsafePs, sizeof(*pUnsafePs), 1);
@@ -1755,8 +1750,19 @@ NtUserEndPaint(HWND hWnd, CONST PAINTSTRUCT* pUnsafePs)
    _SEH2_END
    if (!NT_SUCCESS(Status))
    {
+      SetLastNtError(Status);
+      return FALSE;
+   }
+
+   TRACE("Enter NtUserEndPaint\n");
+   UserEnterExclusive();
+
+   if (!(Window = UserGetWindowObject(hWnd)))
+   {
       goto Cleanup; // Return FALSE
    }
+
+   UserRefObjectCo(Window, &Ref);
 
    Ret = IntEndPaint(Window, &Ps);
 
@@ -2061,6 +2067,7 @@ NtUserGetUpdateRect(HWND hWnd, LPRECT UnsafeRect, BOOL bErase)
    RECTL Rect;
    NTSTATUS Status;
    BOOL Ret = FALSE;
+   BOOL CopyRect = FALSE;
 
    TRACE("Enter NtUserGetUpdateRect\n");
    if (bErase)
@@ -2074,8 +2081,12 @@ NtUserGetUpdateRect(HWND hWnd, LPRECT UnsafeRect, BOOL bErase)
    }
 
    Ret = co_UserGetUpdateRect(Window, &Rect, bErase);
+   CopyRect = (UnsafeRect != NULL);
 
-   if (UnsafeRect != NULL)
+Exit:
+   UserLeave();
+
+   if (CopyRect)
    {
       Status = MmCopyToCaller(UnsafeRect, &Rect, sizeof(RECTL));
       if (!NT_SUCCESS(Status))
@@ -2085,9 +2096,7 @@ NtUserGetUpdateRect(HWND hWnd, LPRECT UnsafeRect, BOOL bErase)
       }
    }
 
-Exit:
    TRACE("Leave NtUserGetUpdateRect, ret=%i\n", Ret);
-   UserLeave();
    return Ret;
 }
 
@@ -2112,20 +2121,12 @@ NtUserRedrawWindow(
    NTSTATUS Status = STATUS_SUCCESS;
    PREGION RgnUpdate = NULL;
 
-   TRACE("Enter NtUserRedrawWindow\n");
-   UserEnterExclusive();
-
-   if (!(Wnd = UserGetWindowObject(hWnd ? hWnd : IntGetDesktopWindow())))
-   {
-      goto Exit; // Return FALSE
-   }
-
    if (lprcUpdate)
    {
       _SEH2_TRY
       {
-          ProbeForRead(lprcUpdate, sizeof(RECTL), 1);
-          RtlCopyMemory(&SafeUpdateRect, lprcUpdate, sizeof(RECTL));
+         ProbeForRead(lprcUpdate, sizeof(RECTL), 1);
+         RtlCopyMemory(&SafeUpdateRect, lprcUpdate, sizeof(RECTL));
       }
       _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
       {
@@ -2135,16 +2136,23 @@ NtUserRedrawWindow(
       if (!NT_SUCCESS(Status))
       {
          EngSetLastError(RtlNtStatusToDosError(Status));
-         goto Exit; // Return FALSE
+         return FALSE;
       }
    }
 
-   if ( flags & ~(RDW_ERASE|RDW_FRAME|RDW_INTERNALPAINT|RDW_INVALIDATE|
-                  RDW_NOERASE|RDW_NOFRAME|RDW_NOINTERNALPAINT|RDW_VALIDATE|
-                  RDW_ERASENOW|RDW_UPDATENOW|RDW_ALLCHILDREN|RDW_NOCHILDREN) )
+   if (flags & ~(RDW_ERASE|RDW_FRAME|RDW_INTERNALPAINT|RDW_INVALIDATE|
+                 RDW_NOERASE|RDW_NOFRAME|RDW_NOINTERNALPAINT|RDW_VALIDATE|
+                 RDW_ERASENOW|RDW_UPDATENOW|RDW_ALLCHILDREN|RDW_NOCHILDREN))
    {
-      /* RedrawWindow fails only in case that flags are invalid */
       EngSetLastError(ERROR_INVALID_FLAGS);
+      return FALSE;
+   }
+
+   TRACE("Enter NtUserRedrawWindow\n");
+   UserEnterExclusive();
+
+   if (!(Wnd = UserGetWindowObject(hWnd ? hWnd : IntGetDesktopWindow())))
+   {
       goto Exit; // Return FALSE
    }
 
@@ -2483,7 +2491,34 @@ NtUserDrawCaptionTemp(
    UNICODE_STRING SafeStr = {0};
    NTSTATUS Status = STATUS_SUCCESS;
    RECTL SafeRect;
-   BOOL Ret;
+   BOOL Ret = FALSE;
+
+   _SEH2_TRY
+   {
+      ProbeForRead(lpRc, sizeof(RECTL), sizeof(ULONG));
+      RtlCopyMemory(&SafeRect, lpRc, sizeof(RECTL));
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
+
+   if (!NT_SUCCESS(Status))
+   {
+      SetLastNtError(Status);
+      return FALSE;
+   }
+
+   if (str != NULL)
+   {
+      Status = ProbeAndCaptureUnicodeString(&SafeStr, UserMode, str);
+      if (!NT_SUCCESS(Status))
+      {
+         SetLastNtError(Status);
+         return FALSE;
+      }
+   }
 
    /* The special NC modes mutate window-manager state; normal caption
     * rendering only consumes a stable window snapshot. */
@@ -2494,39 +2529,8 @@ NtUserDrawCaptionTemp(
 
    if (hWnd != NULL)
    {
-     if(!(pWnd = UserGetWindowObject(hWnd)))
-     {
-        UserLeave();
-        return FALSE;
-     }
-   }
-
-   _SEH2_TRY
-   {
-      ProbeForRead(lpRc, sizeof(RECTL), sizeof(ULONG));
-      RtlCopyMemory(&SafeRect, lpRc, sizeof(RECTL));
-      if (str != NULL)
-      {
-         SafeStr = ProbeForReadUnicodeString(str);
-         if (SafeStr.Length != 0)
-         {
-             ProbeForRead( SafeStr.Buffer,
-                           SafeStr.Length,
-                            sizeof(WCHAR));
-         }
-      }
-   }
-   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
-   {
-      Status = _SEH2_GetExceptionCode();
-   }
-   _SEH2_END;
-
-   if (Status != STATUS_SUCCESS)
-   {
-      SetLastNtError(Status);
-      UserLeave();
-      return FALSE;
+      if (!(pWnd = UserGetWindowObject(hWnd)))
+         goto Exit;
    }
 
    if (str != NULL)
@@ -2553,6 +2557,8 @@ NtUserDrawCaptionTemp(
    }
 Exit:
    UserLeave();
+   if (str != NULL)
+      ReleaseCapturedUnicodeString(&SafeStr, UserMode);
    return Ret;
 }
 
