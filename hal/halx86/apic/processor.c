@@ -8,11 +8,17 @@
 /* INCLUDES ******************************************************************/
 
 #include <hal.h>
+#include <smp.h>
 #define NDEBUG
 #include <debug.h>
 
 KAFFINITY HalpActiveProcessors;
 KAFFINITY HalpDefaultInterruptAffinity;
+
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+extern ULONG HalpStartedProcessorCount;
+extern PPROCESSOR_IDENTITY HalpProcessorIdentity;
+#endif
 
 /* PRIVATE FUNCTIONS *********************************************************/
 
@@ -34,7 +40,19 @@ BOOLEAN
 NTAPI
 HalAllProcessorsStarted(VOID)
 {
-    /* Do nothing */
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    ULONG Processor;
+
+    if (HalpStartedProcessorCount != KeNumberProcessors)
+        return FALSE;
+
+    for (Processor = 0; Processor < HalpStartedProcessorCount; Processor++)
+    {
+        if (!HalpProcessorIdentity[Processor].ProcessorStarted)
+            return FALSE;
+    }
+#endif
+
     return TRUE;
 }
 

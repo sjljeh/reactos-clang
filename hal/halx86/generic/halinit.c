@@ -64,12 +64,14 @@ HalInitializeProcessor(
     /* Set default stall count */
     KeGetPcr()->StallScaleFactor = INITIAL_STALL_COUNT;
 
-    /* Update the interrupt affinity and processor mask */
-    InterlockedBitTestAndSetAffinity(&HalpActiveProcessors, ProcessorNumber);
-    InterlockedBitTestAndSetAffinity(&HalpDefaultInterruptAffinity, ProcessorNumber);
-
     if (ProcessorNumber == 0)
     {
+        /* The BSP is available throughout global HAL initialization. */
+        InterlockedBitTestAndSetAffinity(&HalpActiveProcessors,
+                                         ProcessorNumber);
+        InterlockedBitTestAndSetAffinity(&HalpDefaultInterruptAffinity,
+                                         ProcessorNumber);
+
         /* Register routines for KDCOM */
         HalpRegisterKdSupportFunctions();
     }
@@ -172,6 +174,20 @@ HalInitSystem(
     }
     else if (BootPhase == 1)
     {
+        if (Prcb->Number != 0)
+        {
+            /*
+             * Per-processor HAL setup was completed by
+             * HalInitializeProcessor. Publish this AP now, without rerunning
+             * global bus, DMA and BIOS initialization.
+             */
+            InterlockedBitTestAndSetAffinity(&HalpActiveProcessors,
+                                             Prcb->Number);
+            InterlockedBitTestAndSetAffinity(&HalpDefaultInterruptAffinity,
+                                             Prcb->Number);
+            return TRUE;
+        }
+
         /* Initialize bus handlers */
         HalpInitBusHandlers();
 

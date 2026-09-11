@@ -42,7 +42,7 @@ HALP_APIC_INFO_TABLE HalpApicInfoTable;
 // Bits 2-31 are reserved.
 
 static PROCESSOR_IDENTITY HalpStaticProcessorIdentity[MAXIMUM_PROCESSORS];
-const PPROCESSOR_IDENTITY HalpProcessorIdentity = HalpStaticProcessorIdentity;
+PPROCESSOR_IDENTITY HalpProcessorIdentity = HalpStaticProcessorIdentity;
 
 #if 0
 extern ULONG HalpPicVectorRedirect[16];
@@ -135,9 +135,9 @@ HalpParseApicTables(
                          HalpApicInfoTable.ProcessorCount,
                          LocalApic->ProcessorId, LocalApic->Id, LocalApic->LapicFlags);
 
-                if (!(LocalApic->LapicFlags & (LAPIC_FLAG_ONLINE_CAPABLE | LAPIC_FLAG_ENABLED)))
+                if (!(LocalApic->LapicFlags & LAPIC_FLAG_ENABLED))
                 {
-                    DPRINT00("  Ignored: unusable\n");
+                    DPRINT00("  Ignored: not enabled for boot\n");
                     break;
                 }
 
@@ -225,9 +225,10 @@ HalpParseApicTables(
             }
             default:
             {
-                DPRINT01(" UNIMPLEMENTED: Type %u, Length %u\n",
+                /* Valid MADTs may contain subtables not needed for bring-up. */
+                DPRINT00(" Skipped: Type %u, Length %u\n",
                          AcpiHeader->Type, AcpiHeader->Length);
-                return;
+                break;
             }
         }
 
