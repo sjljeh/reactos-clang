@@ -178,7 +178,7 @@ IntDeployPowerCallout(VOID)
     IntAcquirePowerCalloutLock();
     for (pWin32PwrCallout = IntGetNextPowerCallout(NULL);
          pWin32PwrCallout != NULL;
-         pWin32PwrCallout = IntGetNextPowerCallout(pWin32PwrCallout))
+         pWin32PwrCallout = IntGetNextPowerCallout(NULL))
     {
         if (pWin32PwrCallout->Type == POWER_CALLOUT_EVENT)
         {
