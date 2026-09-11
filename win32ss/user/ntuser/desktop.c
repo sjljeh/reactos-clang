@@ -53,6 +53,7 @@ HDC ScreenDeviceContext = NULL;
 PTHREADINFO gptiDesktopThread = NULL;
 HCURSOR gDesktopCursor = NULL;
 PKEVENT gpDesktopThreadStartedEvent = NULL;
+static ERESOURCE DesktopPaintLock;
 PKEVENT gpDesktopSwitchEvent = NULL;    ///< WinSta0_DesktopSwitch legacy (NT 3.5+) event.
 HANDLE ghDesktopSwitchEvent = NULL;     ///< WinSta0_DesktopSwitch handle in the CSRSS process.
 
@@ -275,6 +276,7 @@ NTSTATUS
 NTAPI
 InitDesktopImpl(VOID)
 {
+    NTSTATUS Status;
     GENERIC_MAPPING IntDesktopMapping = { DESKTOP_READ,
                                           DESKTOP_WRITE,
                                           DESKTOP_EXECUTE,
@@ -300,7 +302,14 @@ InitDesktopImpl(VOID)
                       SynchronizationEvent,
                       FALSE);
 
-    return STATUS_SUCCESS;
+    Status = ExInitializeResourceLite(&DesktopPaintLock);
+    if (!NT_SUCCESS(Status))
+    {
+        ExFreePoolWithTag(gpDesktopThreadStartedEvent, USERTAG_EVENT);
+        gpDesktopThreadStartedEvent = NULL;
+    }
+
+    return Status;
 }
 
 static NTSTATUS
@@ -2910,10 +2919,12 @@ NtUserPaintDesktop(HDC hDC)
 {
     BOOL Ret;
 
-    UserEnterExclusive();
+    UserEnterShared();
     TRACE("Enter NtUserPaintDesktop\n");
 
+    ExAcquireResourceExclusiveLite(&DesktopPaintLock, TRUE);
     Ret = IntPaintDesktop(hDC);
+    ExReleaseResourceLite(&DesktopPaintLock);
 
     TRACE("Leave NtUserPaintDesktop, ret=%i\n", Ret);
     UserLeave();
