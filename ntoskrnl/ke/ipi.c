@@ -16,6 +16,23 @@
 
 extern KSPIN_LOCK KiReverseStallIpiLock;
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+typedef struct _KI_IPI_PACKET_MAILBOX
+{
+    PKIPI_WORKER volatile WorkerRoutine;
+    PVOID volatile CurrentPacket[3];
+} KI_IPI_PACKET_MAILBOX, *PKI_IPI_PACKET_MAILBOX;
+
+/*
+ * The legacy i386 KPRCB has only one incoming SignalDone slot. Keep one
+ * mailbox for every sender/target pair instead, so independent processors can
+ * issue non-blocking packet requests without waiting on each other's slots.
+ */
+static KI_IPI_PACKET_MAILBOX
+    KiIpiPacketMailboxes[MAXIMUM_PROCESSORS][MAXIMUM_PROCESSORS];
+static volatile KAFFINITY KiIpiSenderSummary[MAXIMUM_PROCESSORS];
+#endif
+
 /* PRIVATE FUNCTIONS *********************************************************/
 
 #ifndef _M_AMD64
@@ -97,8 +114,9 @@ KiIpiSendPacket(IN KAFFINITY TargetProcessors,
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     PKPRCB CurrentPrcb = KeGetCurrentPrcb();
     PKPRCB TargetPrcb;
+    PKI_IPI_PACKET_MAILBOX Mailbox;
     KAFFINITY ProcessorMask;
-    ULONG Processor;
+    ULONG Processor, Sender;
 
     ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
     ASSERT(KeGetCurrentIrql() < IPI_LEVEL);
@@ -110,11 +128,9 @@ KiIpiSendPacket(IN KAFFINITY TargetProcessors,
         return;
 
     ASSERT(CurrentPrcb->TargetSet == 0);
+    Sender = CurrentPrcb->Number;
+    ASSERT(Sender < MAXIMUM_PROCESSORS);
 
-    CurrentPrcb->CurrentPacket[0] = Parameter1;
-    CurrentPrcb->CurrentPacket[1] = Parameter2;
-    CurrentPrcb->CurrentPacket[2] = Parameter3;
-    CurrentPrcb->WorkerRoutine = WorkerFunction;
     InterlockedExchange((PLONG)&CurrentPrcb->TargetSet,
                         (LONG)TargetProcessors);
 
@@ -126,23 +142,28 @@ KiIpiSendPacket(IN KAFFINITY TargetProcessors,
             continue;
 
         TargetPrcb = KiProcessorBlock[Processor];
+        Mailbox = &KiIpiPacketMailboxes[Processor][Sender];
 
-        /* A target has one incoming packet slot. Wait until it is free. */
-        while (InterlockedCompareExchangePointer(
-                   (PVOID volatile *)&TargetPrcb->SignalDone,
-                   CurrentPrcb,
-                   NULL) != NULL)
-        {
-            YieldProcessor();
-            KeMemoryBarrierWithoutFence();
-        }
+        /* This sender cannot reuse a mailbox before its packet completes. */
+        ASSERT(!(KiIpiSenderSummary[Processor] & CurrentPrcb->SetMember));
+
+        Mailbox->CurrentPacket[0] = Parameter1;
+        Mailbox->CurrentPacket[1] = Parameter2;
+        Mailbox->CurrentPacket[2] = Parameter3;
+        Mailbox->WorkerRoutine = WorkerFunction;
+
+        /* Publish the packet before exposing the sender and request bits. */
+        KeMemoryBarrier();
+        InterlockedOr((PLONG)&KiIpiSenderSummary[Processor],
+                      (LONG)CurrentPrcb->SetMember);
 
         InterlockedOr((PLONG)&TargetPrcb->RequestSummary,
                       IPI_PACKET_READY);
-
-        /* Deliver now so a competing sender cannot form a slot-wait cycle. */
-        HalRequestIpi(ProcessorMask);
     }
+
+    /* Every target can now discover its packet by sender number. */
+    KeMemoryBarrier();
+    HalRequestIpi(TargetProcessors);
 #else
     UNREFERENCED_PARAMETER(TargetProcessors);
     UNREFERENCED_PARAMETER(WorkerFunction);
@@ -214,10 +235,12 @@ KiIpiServiceRoutine(IN PKTRAP_FRAME TrapFrame,
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     PKPRCB Prcb = KeGetCurrentPrcb();
     PKPRCB SenderPrcb;
+    PKI_IPI_PACKET_MAILBOX Mailbox;
     PKIPI_WORKER WorkerFunction;
     PVOID Parameter1, Parameter2, Parameter3;
-    PVOID PreviousSignal;
+    KAFFINITY SenderSet, SenderMask;
     ULONG RequestSummary;
+    ULONG Sender;
 
     ASSERT(KeGetCurrentIrql() == IPI_LEVEL);
 
@@ -243,27 +266,33 @@ KiIpiServiceRoutine(IN PKTRAP_FRAME TrapFrame,
 
         if (RequestSummary & IPI_PACKET_READY)
         {
-            SenderPrcb = (PKPRCB)InterlockedCompareExchangePointer(
-                (PVOID volatile *)&Prcb->SignalDone, NULL, NULL);
-            ASSERT(SenderPrcb != NULL);
+            SenderSet = (KAFFINITY)InterlockedExchange(
+                (PLONG)&KiIpiSenderSummary[Prcb->Number], 0);
 
-            /* Snapshot the sender's packet before invoking arbitrary code. */
-            KeMemoryBarrier();
-            WorkerFunction = SenderPrcb->WorkerRoutine;
-            Parameter1 = (PVOID)SenderPrcb->CurrentPacket[0];
-            Parameter2 = (PVOID)SenderPrcb->CurrentPacket[1];
-            Parameter3 = (PVOID)SenderPrcb->CurrentPacket[2];
+            for (Sender = 0, SenderMask = 1;
+                 Sender < KeNumberProcessors;
+                 Sender++, SenderMask <<= 1)
+            {
+                if (!(SenderSet & SenderMask))
+                    continue;
 
-            WorkerFunction((PKIPI_CONTEXT)SenderPrcb,
-                           Parameter1,
-                           Parameter2,
-                           Parameter3);
+                SenderPrcb = KiProcessorBlock[Sender];
+                ASSERT(SenderPrcb != NULL);
+                Mailbox = &KiIpiPacketMailboxes[Prcb->Number][Sender];
 
-            /* Make the target packet slot available to another sender. */
-            KeMemoryBarrier();
-            PreviousSignal = InterlockedExchangePointer(
-                (PVOID volatile *)&Prcb->SignalDone, NULL);
-            ASSERT(PreviousSignal == SenderPrcb);
+                /* Snapshot the mailbox before invoking arbitrary code. */
+                KeMemoryBarrier();
+                WorkerFunction = Mailbox->WorkerRoutine;
+                Parameter1 = (PVOID)Mailbox->CurrentPacket[0];
+                Parameter2 = (PVOID)Mailbox->CurrentPacket[1];
+                Parameter3 = (PVOID)Mailbox->CurrentPacket[2];
+                ASSERT(WorkerFunction != NULL);
+
+                WorkerFunction((PKIPI_CONTEXT)SenderPrcb,
+                               Parameter1,
+                               Parameter2,
+                               Parameter3);
+            }
         }
 
         ASSERT((RequestSummary & ~(IPI_APC | IPI_DPC | IPI_FREEZE |
