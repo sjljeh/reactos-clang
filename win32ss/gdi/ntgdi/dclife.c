@@ -497,10 +497,12 @@ DC_vUpdateDC(PDC pdc)
     pdc->pdcattr->ulDirty_ |= DIRTY_DEFAULT ;
 }
 
-#define DC_DRAWLOCK_ACTIVE 0x00000001
-#define DC_DRAWLOCK_TILED  0x00000002
-#define DC_DRAWLOCK_WRITE  0x00000004
-#define DC_DRAWLOCK_READ   0x00000008
+#define DC_DRAWLOCK_ACTIVE      0x00000001
+#define DC_DRAWLOCK_TILED       0x00000002
+#define DC_DRAWLOCK_WRITE       0x00000004
+#define DC_DRAWLOCK_READ        0x00000008
+#define DC_DRAWLOCK_MOUSE_WRITE 0x00000010
+#define DC_DRAWLOCK_MOUSE_READ  0x00000020
 
 static
 BOOL
@@ -753,7 +755,7 @@ DC_vLockPdevForDraw(
         return;
 
     KeEnterCriticalRegion();
-    ExAcquirePushLockExclusive(&ppdev->PointerLock);
+    ExAcquirePushLockShared(&ppdev->PointerLock);
     if (pdcWrite && DC_bGetDrawRect(pdcWrite, prclWrite, TRUE,
                                     &pdcOwner->erclDrawLockWrite))
     {
@@ -766,7 +768,7 @@ DC_vLockPdevForDraw(
         DC_vIncludePointerRect(ppdev, &pdcOwner->erclDrawLockRead);
         pdcOwner->flDrawLock |= DC_DRAWLOCK_READ;
     }
-    ExReleasePushLockExclusive(&ppdev->PointerLock);
+    ExReleasePushLockShared(&ppdev->PointerLock);
     KeLeaveCriticalRegion();
 
     KeEnterCriticalRegion();
@@ -820,12 +822,18 @@ DC_vPrepareDCsForBlit(
         DC_vLockPdevForDraw(pdcDest, pdcDest, rcDest, pdcSrc, rcSrc);
         if (!rcDest) rcDest = &pdcDest->erclClip;
         if (!rcSrc) rcSrc = &pdcSrc->erclClip;
-        MouseSafetyOnDrawStart(pdcDest->ppdev,
-                               rcDest->left, rcDest->top,
-                               rcDest->right, rcDest->bottom);
-        MouseSafetyOnDrawStart(pdcSrc->ppdev,
-                               rcSrc->left, rcSrc->top,
-                               rcSrc->right, rcSrc->bottom);
+        if (MouseSafetyOnDrawStart(pdcDest->ppdev,
+                                   rcDest->left, rcDest->top,
+                                   rcDest->right, rcDest->bottom))
+        {
+            pdcDest->flDrawLock |= DC_DRAWLOCK_MOUSE_WRITE;
+        }
+        if (MouseSafetyOnDrawStart(pdcSrc->ppdev,
+                                   rcSrc->left, rcSrc->top,
+                                   rcSrc->right, rcSrc->bottom))
+        {
+            pdcDest->flDrawLock |= DC_DRAWLOCK_MOUSE_READ;
+        }
 #if DBG
         pdcDest->fs |= DC_PREPARED;
         pdcSrc->fs |= DC_PREPARED;
@@ -857,9 +865,14 @@ DC_vPrepareDCsForBlit(
         else
             DC_vLockPdevForDraw(pdcFirst, NULL, NULL, pdcFirst, prcFirst);
         if (!prcFirst) prcFirst = &pdcFirst->erclClip;
-        MouseSafetyOnDrawStart(pdcFirst->ppdev,
-                               prcFirst->left, prcFirst->top,
-                               prcFirst->right, prcFirst->bottom);
+        if (MouseSafetyOnDrawStart(pdcFirst->ppdev,
+                                   prcFirst->left, prcFirst->top,
+                                   prcFirst->right, prcFirst->bottom))
+        {
+            pdcFirst->flDrawLock |= (pdcFirst == pdcDest) ?
+                                    DC_DRAWLOCK_MOUSE_WRITE :
+                                    DC_DRAWLOCK_MOUSE_READ;
+        }
     }
 #if DBG
     pdcFirst->fs |= DC_PREPARED;
@@ -875,9 +888,14 @@ DC_vPrepareDCsForBlit(
         else
             DC_vLockPdevForDraw(pdcSecond, NULL, NULL, pdcSecond, prcSecond);
         if (!prcSecond) prcSecond = &pdcSecond->erclClip;
-        MouseSafetyOnDrawStart(pdcSecond->ppdev,
-                               prcSecond->left, prcSecond->top,
-                               prcSecond->right, prcSecond->bottom);
+        if (MouseSafetyOnDrawStart(pdcSecond->ppdev,
+                                   prcSecond->left, prcSecond->top,
+                                   prcSecond->right, prcSecond->bottom))
+        {
+            pdcSecond->flDrawLock |= (pdcSecond == pdcDest) ?
+                                     DC_DRAWLOCK_MOUSE_WRITE :
+                                     DC_DRAWLOCK_MOUSE_READ;
+        }
     }
 #if DBG
     pdcSecond->fs |= DC_PREPARED;
@@ -894,8 +912,10 @@ DC_vFinishBlit(PDC pdc1, PDC pdc2)
         (pdc2->dctype == DCTYPE_DIRECT) &&
         (pdc1->ppdev == pdc2->ppdev))
     {
-        MouseSafetyOnDrawEnd(pdc1->ppdev);
-        MouseSafetyOnDrawEnd(pdc2->ppdev);
+        if (pdc1->flDrawLock & DC_DRAWLOCK_MOUSE_WRITE)
+            MouseSafetyOnDrawEnd(pdc1->ppdev);
+        if (pdc1->flDrawLock & DC_DRAWLOCK_MOUSE_READ)
+            MouseSafetyOnDrawEnd(pdc2->ppdev);
         DC_vUnlockPdevForDraw(pdc1);
 #if DBG
         pdc1->fs &= ~DC_PREPARED;
@@ -906,7 +926,11 @@ DC_vFinishBlit(PDC pdc1, PDC pdc2)
 
     if (pdc1->dctype == DCTYPE_DIRECT)
     {
-        MouseSafetyOnDrawEnd(pdc1->ppdev);
+        if (pdc1->flDrawLock &
+            (DC_DRAWLOCK_MOUSE_WRITE | DC_DRAWLOCK_MOUSE_READ))
+        {
+            MouseSafetyOnDrawEnd(pdc1->ppdev);
+        }
         DC_vUnlockPdevForDraw(pdc1);
     }
 #if DBG
@@ -917,7 +941,11 @@ DC_vFinishBlit(PDC pdc1, PDC pdc2)
     {
         if (pdc2->dctype == DCTYPE_DIRECT)
         {
-            MouseSafetyOnDrawEnd(pdc2->ppdev);
+            if (pdc2->flDrawLock &
+                (DC_DRAWLOCK_MOUSE_WRITE | DC_DRAWLOCK_MOUSE_READ))
+            {
+                MouseSafetyOnDrawEnd(pdc2->ppdev);
+            }
             DC_vUnlockPdevForDraw(pdc2);
         }
 #if DBG

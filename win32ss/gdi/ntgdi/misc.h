@@ -113,6 +113,21 @@ ExAcquirePushLockExclusive(PEX_PUSH_LOCK PushLock)
 }
 
 FORCEINLINE
+VOID
+ExAcquirePushLockShared(PEX_PUSH_LOCK PushLock)
+{
+    EX_PUSH_LOCK NewValue;
+
+    NewValue.Value = EX_PUSH_LOCK_LOCK | EX_PUSH_LOCK_SHARE_INC;
+    if (InterlockedCompareExchangePointer((PVOID volatile *)PushLock,
+                                          NewValue.Ptr,
+                                          NULL))
+    {
+        ExfAcquirePushLockShared(PushLock);
+    }
+}
+
+FORCEINLINE
 BOOLEAN
 ExTryAcquirePushLockExclusive(PEX_PUSH_LOCK PushLock)
 {
@@ -134,6 +149,21 @@ ExReleasePushLockExclusive(PEX_PUSH_LOCK PushLock)
     {
         /* Wake it up */
         ExfTryToWakePushLock(PushLock);
+    }
+}
+
+FORCEINLINE
+VOID
+ExReleasePushLockShared(PEX_PUSH_LOCK PushLock)
+{
+    EX_PUSH_LOCK OldValue;
+
+    OldValue.Value = EX_PUSH_LOCK_LOCK | EX_PUSH_LOCK_SHARE_INC;
+    if (InterlockedCompareExchangePointer((PVOID volatile *)PushLock,
+                                          NULL,
+                                          OldValue.Ptr) != OldValue.Ptr)
+    {
+        ExfReleasePushLockShared(PushLock);
     }
 }
 

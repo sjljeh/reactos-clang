@@ -52,22 +52,7 @@ MouseSafetyOnDrawStart(
     ASSERT(ppdev != NULL);
     ASSERT(ppdev->pSurface != NULL);
 
-    KeEnterCriticalRegion();
-    ExAcquirePushLockExclusive(&ppdev->PointerLock);
     pgp = &ppdev->Pointer;
-
-    if (pgp->Exclude.right == -1)
-    {
-        goto Exit;
-    }
-
-    ppdev->SafetyRemoveCount++;
-
-    if (ppdev->SafetyRemoveLevel != 0)
-    {
-        goto Exit;
-    }
-
     if (HazardX1 > HazardX2)
     {
         tmp = HazardX2;
@@ -81,10 +66,38 @@ MouseSafetyOnDrawStart(
         HazardY1 = tmp;
     }
 
-    if (pgp->Exclude.right >= HazardX1
-        && pgp->Exclude.left <= HazardX2
-        && pgp->Exclude.bottom >= HazardY1
-        && pgp->Exclude.top <= HazardY2)
+    KeEnterCriticalRegion();
+    ExAcquirePushLockShared(&ppdev->PointerLock);
+
+    /* Most drawing is disjoint from the cursor and only needs a shared test. */
+    if (pgp->Exclude.right == -1 ||
+        pgp->Exclude.right < HazardX1 ||
+        pgp->Exclude.left > HazardX2 ||
+        pgp->Exclude.bottom < HazardY1 ||
+        pgp->Exclude.top > HazardY2)
+    {
+        ExReleasePushLockShared(&ppdev->PointerLock);
+        KeLeaveCriticalRegion();
+        return FALSE;
+    }
+
+    ExReleasePushLockShared(&ppdev->PointerLock);
+    ExAcquirePushLockExclusive(&ppdev->PointerLock);
+
+    /* Recheck after upgrading past a concurrent cursor restoration. */
+    if (pgp->Exclude.right == -1 ||
+        pgp->Exclude.right < HazardX1 ||
+        pgp->Exclude.left > HazardX2 ||
+        pgp->Exclude.bottom < HazardY1 ||
+        pgp->Exclude.top > HazardY2)
+    {
+        goto Exit;
+    }
+
+    ppdev->SafetyRemoveCount++;
+    bResult = TRUE;
+
+    if (ppdev->SafetyRemoveLevel == 0)
     {
         ppdev->SafetyRemoveLevel = ppdev->SafetyRemoveCount;
         if (ppdev->flFlags & PDEV_HARDWARE_POINTER)
@@ -92,8 +105,6 @@ MouseSafetyOnDrawStart(
         else if (ppdev->flFlags & PDEV_SOFTWARE_POINTER)
             EngMovePointer(&ppdev->pSurface->SurfObj, -1, -1, NULL);
     }
-
-    bResult = TRUE;
 
 Exit:
     ExReleasePushLockExclusive(&ppdev->PointerLock);
