@@ -161,7 +161,7 @@ MMixerGetAudioPinDataRanges(
     IN OUT PKSMULTIPLE_ITEM * OutMultipleItem)
 {
     KSP_PIN PinProperty;
-    ULONG BytesReturned = 0;
+    ULONG BytesReturned = 0, RequiredSize = 0;
     MIXER_STATUS Status;
     PKSMULTIPLE_ITEM MultipleItem;
 
@@ -172,21 +172,41 @@ MMixerGetAudioPinDataRanges(
     PinProperty.Property.Id = KSPROPERTY_PIN_DATARANGES;
     PinProperty.Property.Flags = KSPROPERTY_TYPE_GET;
 
-    Status = MixerContext->Control(hDevice, IOCTL_KS_PROPERTY, (PVOID)&PinProperty, sizeof(KSP_PIN), (PVOID)NULL, 0, &BytesReturned);
-    if (Status != MM_STATUS_MORE_ENTRIES)
+    Status = MixerContext->Control(hDevice,
+                                   IOCTL_KS_PROPERTY,
+                                   (PVOID)&PinProperty,
+                                   sizeof(KSP_PIN),
+                                   &RequiredSize,
+                                   sizeof(RequiredSize),
+                                   &BytesReturned);
+    if (Status != MM_STATUS_SUCCESS)
     {
         return Status;
     }
 
-    MultipleItem = MixerContext->Alloc(BytesReturned);
+    if ((BytesReturned != sizeof(RequiredSize)) ||
+        (RequiredSize < sizeof(KSMULTIPLE_ITEM)))
+    {
+        return MM_STATUS_UNSUCCESSFUL;
+    }
+
+    MultipleItem = MixerContext->Alloc(RequiredSize);
     if (!MultipleItem)
     {
         /* not enough memory */
         return MM_STATUS_NO_MEMORY;
     }
 
-    Status = MixerContext->Control(hDevice, IOCTL_KS_PROPERTY, (PVOID)&PinProperty, sizeof(KSP_PIN), (PVOID)MultipleItem, BytesReturned, &BytesReturned);
-    if (Status != MM_STATUS_SUCCESS)
+    Status = MixerContext->Control(hDevice,
+                                   IOCTL_KS_PROPERTY,
+                                   (PVOID)&PinProperty,
+                                   sizeof(KSP_PIN),
+                                   (PVOID)MultipleItem,
+                                   RequiredSize,
+                                   &BytesReturned);
+    if ((Status != MM_STATUS_SUCCESS) ||
+        (BytesReturned < sizeof(KSMULTIPLE_ITEM)) ||
+        (BytesReturned > RequiredSize))
     {
         /* failed */
         MixerContext->Free(MultipleItem);

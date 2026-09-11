@@ -45,24 +45,38 @@ MMixerGetFilterTopologyProperty(
     KSPROPERTY Property;
     PKSMULTIPLE_ITEM MultipleItem;
     MIXER_STATUS Status;
-    ULONG BytesReturned;
+    ULONG BytesReturned, RequiredSize;
 
     /* setup property request */
     Property.Id = PropertyId;
     Property.Flags = KSPROPERTY_TYPE_GET;
     Property.Set = KSPROPSETID_Topology;
 
-    /* query for the size */
-    Status = MixerContext->Control(hMixer, IOCTL_KS_PROPERTY, (PVOID)&Property, sizeof(KSPROPERTY), NULL, 0, &BytesReturned);
+    /*
+     * Sized-list properties return their required allocation through the
+     * KSMULTIPLE_ITEM size field when given a ULONG-sized output buffer.  Do
+     * not depend on an error completion preserving IoStatus.Information.
+     */
+    RequiredSize = 0;
+    Status = MixerContext->Control(hMixer,
+                                   IOCTL_KS_PROPERTY,
+                                   (PVOID)&Property,
+                                   sizeof(KSPROPERTY),
+                                   &RequiredSize,
+                                   sizeof(RequiredSize),
+                                   &BytesReturned);
 
-    if (Status != MM_STATUS_MORE_ENTRIES)
+    if (Status != MM_STATUS_SUCCESS)
         return Status;
 
-    /* sanity check */
-    ASSERT(BytesReturned);
+    if ((BytesReturned != sizeof(RequiredSize)) ||
+        (RequiredSize < sizeof(KSMULTIPLE_ITEM)))
+    {
+        return MM_STATUS_UNSUCCESSFUL;
+    }
 
     /* allocate an result buffer */
-    MultipleItem = (PKSMULTIPLE_ITEM)MixerContext->Alloc(BytesReturned);
+    MultipleItem = (PKSMULTIPLE_ITEM)MixerContext->Alloc(RequiredSize);
 
     if (!MultipleItem)
     {
@@ -71,9 +85,17 @@ MMixerGetFilterTopologyProperty(
     }
 
     /* query again with allocated buffer */
-    Status = MixerContext->Control(hMixer, IOCTL_KS_PROPERTY, (PVOID)&Property, sizeof(KSPROPERTY), (PVOID)MultipleItem, BytesReturned, &BytesReturned);
+    Status = MixerContext->Control(hMixer,
+                                   IOCTL_KS_PROPERTY,
+                                   (PVOID)&Property,
+                                   sizeof(KSPROPERTY),
+                                   (PVOID)MultipleItem,
+                                   RequiredSize,
+                                   &BytesReturned);
 
-    if (Status != MM_STATUS_SUCCESS)
+    if ((Status != MM_STATUS_SUCCESS) ||
+        (BytesReturned < sizeof(KSMULTIPLE_ITEM)) ||
+        (BytesReturned > RequiredSize))
     {
         /* failed */
         MixerContext->Free((PVOID)MultipleItem);
