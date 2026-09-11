@@ -1128,7 +1128,7 @@ DeviceDlgProc(
                 case PSN_WIZBACK:
                 {
                     /* Return to the Install type selection page instead of the Repair/Upgrade page */
-                    SetWindowLongW(hwndDlg, DWLP_MSGRESULT, IDD_TYPEPAGE);
+                    SetWindowLongPtrW(hwndDlg, DWLP_MSGRESULT, IDD_TYPEPAGE);
                     return TRUE;
                 }
 
