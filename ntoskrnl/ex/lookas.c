@@ -23,6 +23,15 @@ LIST_ENTRY ExPoolLookasideListHead;
 GENERAL_LOOKASIDE ExpSmallNPagedPoolLookasideLists[NUMBER_POOL_LOOKASIDE_LISTS];
 GENERAL_LOOKASIDE ExpSmallPagedPoolLookasideLists[NUMBER_POOL_LOOKASIDE_LISTS];
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+/* Keep the hot pool caches processor-local; the existing arrays are the
+ * shared fallback lists referenced through each PRCB's L pointers. */
+static GENERAL_LOOKASIDE
+ExpProcessorNPagedPoolLookasideLists[MAXIMUM_PROCESSORS][NUMBER_POOL_LOOKASIDE_LISTS];
+static GENERAL_LOOKASIDE
+ExpProcessorPagedPoolLookasideLists[MAXIMUM_PROCESSORS][NUMBER_POOL_LOOKASIDE_LISTS];
+#endif
+
 /* PRIVATE FUNCTIONS *********************************************************/
 
 CODE_SEG("INIT")
@@ -61,25 +70,62 @@ ExInitPoolLookasidePointers(VOID)
     ULONG i;
     PKPRCB Prcb = KeGetCurrentPrcb();
     PGENERAL_LOOKASIDE Entry;
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    PGENERAL_LOOKASIDE LocalEntry;
+
+    ASSERT(Prcb->Number < MAXIMUM_PROCESSORS);
+#endif
 
     /* Loop for all pool lists */
     for (i = 0; i < NUMBER_POOL_LOOKASIDE_LISTS; i++)
     {
         /* Initialize the non-paged list */
         Entry = &ExpSmallNPagedPoolLookasideLists[i];
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+        LocalEntry = &ExpProcessorNPagedPoolLookasideLists[Prcb->Number][i];
+        RtlZeroMemory(LocalEntry, sizeof(*LocalEntry));
+        LocalEntry->Tag = 'looP';
+        LocalEntry->Type = NonPagedPool;
+        LocalEntry->Size = (i + 1) * sizeof(LIST_ENTRY);
+        LocalEntry->MaximumDepth = 256;
+        LocalEntry->Depth = 2;
+        LocalEntry->Allocate = ExAllocatePoolWithTag;
+        LocalEntry->Free = ExFreePool;
+        InitializeSListHead(&LocalEntry->ListHead);
+
+        Prcb->PPNPagedLookasideList[i].P = LocalEntry;
+        Prcb->PPNPagedLookasideList[i].L = Entry;
+#else
         InitializeSListHead(&Entry->ListHead);
 
         /* Bind to PRCB */
         Prcb->PPNPagedLookasideList[i].P = Entry;
         Prcb->PPNPagedLookasideList[i].L = Entry;
+#endif
 
         /* Initialize the paged list */
         Entry = &ExpSmallPagedPoolLookasideLists[i];
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+        LocalEntry = &ExpProcessorPagedPoolLookasideLists[Prcb->Number][i];
+        RtlZeroMemory(LocalEntry, sizeof(*LocalEntry));
+        LocalEntry->Tag = 'looP';
+        LocalEntry->Type = PagedPool;
+        LocalEntry->Size = (i + 1) * sizeof(LIST_ENTRY);
+        LocalEntry->MaximumDepth = 256;
+        LocalEntry->Depth = 2;
+        LocalEntry->Allocate = ExAllocatePoolWithTag;
+        LocalEntry->Free = ExFreePool;
+        InitializeSListHead(&LocalEntry->ListHead);
+
+        Prcb->PPPagedLookasideList[i].P = LocalEntry;
+        Prcb->PPPagedLookasideList[i].L = Entry;
+#else
         InitializeSListHead(&Entry->ListHead);
 
         /* Bind to PRCB */
         Prcb->PPPagedLookasideList[i].P = Entry;
         Prcb->PPPagedLookasideList[i].L = Entry;
+#endif
     }
 }
 
