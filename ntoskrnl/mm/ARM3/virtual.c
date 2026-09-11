@@ -522,7 +522,7 @@ MiDeletePte(IN PMMPTE PointerPte,
     }
 
     /* Flush the TLB */
-    KeFlushCurrentTb();
+    KeFlushEntireTb(TRUE, TRUE);
 }
 
 VOID
@@ -2583,7 +2583,7 @@ MiProcessValidPteList(IN PMMPTE *ValidPteList,
     // All the PTEs have been dereferenced and made invalid, flush the TLB now
     // and then release the PFN lock
     //
-    KeFlushCurrentTb();
+    KeFlushEntireTb(TRUE, TRUE);
     MiReleasePfnLock(OldIrql);
 }
 

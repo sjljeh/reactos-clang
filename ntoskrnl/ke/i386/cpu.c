@@ -1514,6 +1514,61 @@ KiFlushTargetEntireTb(IN PKIPI_CONTEXT PacketContext,
     KiIpiSignalPacketDone(PacketContext);
 }
 
+#ifdef CONFIG_SMP
+static
+VOID
+NTAPI
+KiFlushTargetSingleTb(
+    _In_ PKIPI_CONTEXT PacketContext,
+    _In_ PVOID Ignored1,
+    _In_ PVOID Address,
+    _In_ PVOID Ignored3)
+{
+    KeInvalidateTlbEntry(Address);
+    KiIpiSignalPacketDone(PacketContext);
+}
+#endif
+
+VOID
+NTAPI
+KeFlushSingleTb(
+    _In_ PVOID Address,
+    _In_ BOOLEAN AllProcessors)
+{
+#ifdef CONFIG_SMP
+    PKPRCB Prcb = KeGetCurrentPrcb();
+    KAFFINITY TargetAffinity;
+    KIRQL OldIrql;
+
+    OldIrql = KeRaiseIrqlToSynchLevel();
+    TargetAffinity = AllProcessors ?
+        KeActiveProcessors : KeGetCurrentProcess()->ActiveProcessors;
+    TargetAffinity &= ~Prcb->SetMember;
+
+    if (TargetAffinity)
+    {
+        KiIpiSendPacket(TargetAffinity,
+                        KiFlushTargetSingleTb,
+                        NULL,
+                        (ULONG_PTR)Address,
+                        NULL);
+    }
+
+    KeInvalidateTlbEntry(Address);
+
+    while (Prcb->TargetSet != 0)
+    {
+        YieldProcessor();
+        KeMemoryBarrierWithoutFence();
+    }
+
+    KeLowerIrql(OldIrql);
+#else
+    UNREFERENCED_PARAMETER(AllProcessors);
+    KeInvalidateTlbEntry(Address);
+#endif
+}
+
 /*
  * @implemented
  */

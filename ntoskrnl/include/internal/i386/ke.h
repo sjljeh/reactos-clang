@@ -457,6 +457,12 @@ KiProcessorFreezeHandler(
     _In_ PKTRAP_FRAME TrapFrame,
     _In_opt_ PKEXCEPTION_FRAME ExceptionFrame);
 
+VOID
+NTAPI
+KeFlushSingleTb(
+    _In_ PVOID Address,
+    _In_ BOOLEAN AllProcessors);
+
 FORCEINLINE
 VOID
 Ke386SetGdtEntryBase(PKGDTENTRY GdtEntry, PVOID BaseAddress)

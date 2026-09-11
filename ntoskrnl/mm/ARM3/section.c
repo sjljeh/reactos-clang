@@ -2023,7 +2023,7 @@ MiRemoveMappedPtes(IN PVOID BaseAddress,
     }
 
     /* Flush the TLB */
-    KeFlushCurrentTb();
+    KeFlushEntireTb(TRUE, TRUE);
 
     /* Acquire the PFN lock */
     OldIrql = MiAcquirePfnLock();
