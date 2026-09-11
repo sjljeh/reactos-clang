@@ -1543,7 +1543,7 @@ KeFlushSingleTb(
     OldIrql = KeRaiseIrqlToSynchLevel();
     Prcb = KeGetCurrentPrcb();
     TargetAffinity = AllProcessors ?
-        KeActiveProcessors : KeGetCurrentProcess()->ActiveProcessors;
+        KeActiveProcessors : Prcb->CurrentThread->ApcState.Process->ActiveProcessors;
     TargetAffinity &= ~Prcb->SetMember;
 
     if (TargetAffinity)
@@ -1599,7 +1599,7 @@ KeFlushEntireTb(IN BOOLEAN Invalid,
 
     /* Get the current processor affinity, and exclude ourselves */
     TargetAffinity = AllProcessors ?
-        KeActiveProcessors : KeGetCurrentProcess()->ActiveProcessors;
+        KeActiveProcessors : Prcb->CurrentThread->ApcState.Process->ActiveProcessors;
     TargetAffinity &= ~Prcb->SetMember;
 
     /* Make sure this is MP */
