@@ -20,6 +20,42 @@ static PEVENTTABLE GlobalEvents = NULL;
 
 /* PRIVATE FUNCTIONS *********************************************************/
 
+static
+HWINEVENTHOOK*
+FASTCALL
+IntGetEventHookHandles(VOID)
+{
+   HWINEVENTHOOK *pList;
+   PLIST_ENTRY pEntry;
+   UINT i = 0, Count = 0;
+
+   for (pEntry = GlobalEvents->Events.Flink;
+        pEntry != &GlobalEvents->Events;
+        pEntry = pEntry->Flink)
+   {
+      Count++;
+   }
+
+   pList = ExAllocatePoolWithTag(PagedPool,
+                                 (Count + 1) * sizeof(*pList),
+                                 TAG_HOOK);
+   if (!pList)
+      return NULL;
+
+   for (pEntry = GlobalEvents->Events.Flink;
+        pEntry != &GlobalEvents->Events;
+        pEntry = pEntry->Flink)
+   {
+      PEVENTHOOK pEH = CONTAINING_RECORD(pEntry, EVENTHOOK, Chain);
+
+      NT_ASSERT(i < Count);
+      pList[i++] = UserHMGetHandle(pEH);
+   }
+   pList[i] = NULL;
+
+   return pList;
+}
+
 VOID
 FASTCALL
 IntFreeEventPack(
@@ -196,9 +232,10 @@ IntNotifyWinEvent(
    DWORD flags)
 {
    PEVENTHOOK pEH;
-   PLIST_ENTRY ListEntry;
+   HWINEVENTHOOK *pHookHandles;
    PTHREADINFO pti, ptiCurrent;
    USER_REFERENCE_ENTRY Ref;
+   UINT i;
 
    TRACE("IntNotifyWinEvent GlobalEvents = %p pWnd %p\n", GlobalEvents, pWnd);
 
@@ -213,12 +250,17 @@ IntNotifyWinEvent(
    else
       pti = ptiCurrent;
 
-   ListEntry = GlobalEvents->Events.Flink;
-   ASSERT(ListEntry != &GlobalEvents->Events);
-   while (ListEntry != &GlobalEvents->Events)
+   pHookHandles = IntGetEventHookHandles();
+   if (!pHookHandles)
+      return;
+
+   for (i = 0; pHookHandles[i]; i++)
    {
-     pEH = CONTAINING_RECORD(ListEntry, EVENTHOOK, Chain);
-     ListEntry = ListEntry->Flink;
+     pEH = (PEVENTHOOK)UserGetObject(gHandleTable,
+                                    pHookHandles[i],
+                                    TYPE_WINEVENTHOOK);
+     if (!pEH)
+        continue;
 
      // Must be inside the event window.
      if ( Event >= pEH->eventMin && Event <= pEH->eventMax )
@@ -260,6 +302,8 @@ IntNotifyWinEvent(
         }
      }
    }
+
+   ExFreePoolWithTag(pHookHandles, TAG_HOOK);
 }
 
 VOID
