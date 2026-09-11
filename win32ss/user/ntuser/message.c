@@ -934,7 +934,7 @@ IntDispatchMessage(PMSG pMsg)
             if (pTimer && pTimer->pfn)
             {
                 Time = EngGetTickCount32();
-                pTimer->pfn(pMsg->hwnd, WM_SYSTIMER, (UINT)pMsg->wParam, Time);
+                pTimer->pfn(pMsg->hwnd, WM_SYSTIMER, pMsg->wParam, Time);
             }
             return 0;
         }
