@@ -1600,48 +1600,73 @@ IntEndPaint(PWND Wnd, PPAINTSTRUCT Ps)
    return TRUE;
 }
 
+static BOOL
+IntFillWindowRect(HDC hDC,
+                  HBRUSH hBrush,
+                  const RECT *ClientRect,
+                  BOOL ParentDc,
+                  INT x,
+                  INT y)
+{
+   RECT Rect;
+   POINT ppt;
+   INT type;
+
+   type = GdiGetClipBox(hDC, &Rect);
+   if (type == NULLREGION ||
+       (ParentDc && !RECTL_bIntersectRect(&Rect, &Rect, ClientRect)))
+   {
+      return FALSE;
+   }
+
+   GreSetBrushOrg(hDC, x, y, &ppt);
+   FillRect(hDC, &Rect, hBrush);
+   GreSetBrushOrg(hDC, ppt.x, ppt.y, NULL);
+   return TRUE;
+}
+
 BOOL FASTCALL
 IntFillWindow(PWND pWndParent,
               PWND pWnd,
               HDC  hDC,
               HBRUSH hBrush)
 {
-   RECT Rect, Rect1;
+   RECT ClientRect, Rect;
+   POINT ppt;
+   BOOL ParentDc;
    INT type;
+   INT x = 0, y = 0;
 
    if (!pWndParent)
       pWndParent = pWnd;
 
+   IntGetClientRect(pWnd, &ClientRect);
+   ParentDc = !!(pWnd->pcls->style & CS_PARENTDC);
+
    type = GdiGetClipBox(hDC, &Rect);
-
-   IntGetClientRect(pWnd, &Rect1);
-
-   if ( type != NULLREGION && // Clip box is not empty,
-       (!(pWnd->pcls->style & CS_PARENTDC) || // not parent dc or
-         RECTL_bIntersectRect( &Rect, &Rect, &Rect1) ) ) // intersecting.
+   if (type == NULLREGION ||
+       (ParentDc && !RECTL_bIntersectRect(&Rect, &Rect, &ClientRect)))
    {
-      POINT ppt;
-      INT x = 0, y = 0;
-
-      if (!UserIsDesktopWindow(pWndParent))
-      {
-          x = pWndParent->rcClient.left - pWnd->rcClient.left;
-          y = pWndParent->rcClient.top  - pWnd->rcClient.top;
-      }
-
-      GreSetBrushOrg(hDC, x, y, &ppt);
-
-      if ( hBrush < (HBRUSH)CTLCOLOR_MAX )
-          hBrush = GetControlColor( pWndParent, pWnd, hDC, HandleToUlong(hBrush) + WM_CTLCOLORMSGBOX);
-
-      FillRect(hDC, &Rect, hBrush);
-
-      GreSetBrushOrg(hDC, ppt.x, ppt.y, NULL);
-
-      return TRUE;
-   }
-   else
       return FALSE;
+   }
+
+   if (!UserIsDesktopWindow(pWndParent))
+   {
+      x = pWndParent->rcClient.left - pWnd->rcClient.left;
+      y = pWndParent->rcClient.top  - pWnd->rcClient.top;
+   }
+
+   GreSetBrushOrg(hDC, x, y, &ppt);
+
+   if (hBrush < (HBRUSH)CTLCOLOR_MAX)
+      hBrush = GetControlColor(pWndParent,
+                               pWnd,
+                               hDC,
+                               HandleToUlong(hBrush) + WM_CTLCOLORMSGBOX);
+
+   FillRect(hDC, &Rect, hBrush);
+   GreSetBrushOrg(hDC, ppt.x, ppt.y, NULL);
+   return TRUE;
 }
 
 /* PUBLIC FUNCTIONS ***********************************************************/
@@ -1758,10 +1783,16 @@ NtUserFillWindow(HWND hWndParent,
    BOOL ret = FALSE;
    PWND pWnd, pWndParent = NULL;
    USER_REFERENCE_ENTRY Ref;
+   RECT ClientRect;
+   BOOL ParentDc;
+   INT x = 0, y = 0;
 
    TRACE("Enter NtUserFillWindow\n");
-   /* Window geometry and properties are read-only in this drawing path. */
-   UserEnterShared();
+   /* Control-color selectors send a synchronous callback before drawing. */
+   if (hBrush < (HBRUSH)CTLCOLOR_MAX)
+      UserEnterExclusive();
+   else
+      UserEnterShared();
 
    if (!hDC)
    {
@@ -1776,6 +1807,25 @@ NtUserFillWindow(HWND hWndParent,
    if (hWndParent && !(pWndParent = UserGetWindowObject(hWndParent)))
    {
       goto Exit;
+   }
+
+   if (hBrush >= (HBRUSH)CTLCOLOR_MAX)
+   {
+      if (!pWndParent)
+         pWndParent = pWnd;
+
+      IntGetClientRect(pWnd, &ClientRect);
+      ParentDc = !!(pWnd->pcls->style & CS_PARENTDC);
+      if (!UserIsDesktopWindow(pWndParent))
+      {
+         x = pWndParent->rcClient.left - pWnd->rcClient.left;
+         y = pWndParent->rcClient.top  - pWnd->rcClient.top;
+      }
+
+      UserLeave();
+      ret = IntFillWindowRect(hDC, hBrush, &ClientRect, ParentDc, x, y);
+      TRACE("Leave NtUserFillWindow, ret=%i\n", ret);
+      return ret;
    }
 
    UserRefObjectCo(pWnd, &Ref);

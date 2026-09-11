@@ -472,7 +472,17 @@ NtUserCallTwoParam(
     {
         case TWOPARAM_ROUTINE_REDRAWTITLE:
         {
+            PMENU Menu = NULL;
+
             Window = UserGetWindowObject((HWND)Param1);
+            if (Window && !(gpsi->dwSRVIFlags & SRVINFO_APIHOOK))
+            {
+                if (!(Window->style & WS_CHILD) && Window->IDMenu)
+                    Menu = UserGetMenuObject(UlongToHandle(Window->IDMenu));
+
+                if (!Menu || !UserMenuDrawNeedsExclusive(Menu))
+                    UserConvertExclusiveToShared();
+            }
             Ret = (DWORD_PTR)UserPaintCaption(Window, (INT)Param2);
             break;
         }

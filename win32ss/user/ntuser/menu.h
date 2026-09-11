@@ -160,6 +160,7 @@ PITEM FASTCALL MENU_FindItem( PMENU *pmenu, UINT *nPos, UINT wFlags );
 BOOL FASTCALL IntMenuItemInfo(PMENU Menu, UINT Item, BOOL ByPosition, PROSMENUITEMINFO UnsafeItemInfo, BOOL SetOrGet, PUNICODE_STRING lpstr);
 BOOL FASTCALL IntSetMenu(PWND Wnd,HMENU Menu,BOOL *Changed);
 UINT MENU_DrawMenuBar( HDC hDC, LPRECT lprect, PWND pWnd, BOOL suppress_draw );
+BOOL FASTCALL UserMenuDrawNeedsExclusive(PMENU Menu);
 BOOL MenuInit(VOID);
 VOID MENU_TrackKbdMenuBar(PWND pwnd, UINT wParam, WCHAR wChar);
 VOID MENU_TrackMouseMenuBar( PWND pWnd, ULONG ht, POINT pt);

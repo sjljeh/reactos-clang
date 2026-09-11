@@ -6240,8 +6240,8 @@ Exit:
    return Ret;
 }
 
-static BOOL
-MenuBarDrawNeedsExclusive(PMENU Menu)
+BOOL FASTCALL
+UserMenuDrawNeedsExclusive(PMENU Menu)
 {
    UINT i;
 
@@ -6323,7 +6323,7 @@ NtUserDrawMenuBarTemp(
 
    /* Owner-draw and callback bitmap items can reenter USER. Keep the
     * traditional exclusive path for them; ordinary menu bars draw shared. */
-   if (!MenuBarDrawNeedsExclusive(Menu))
+   if (!UserMenuDrawNeedsExclusive(Menu))
       UserConvertExclusiveToShared();
 
    Ret = IntDrawMenuBarTemp(Window, hDC, &Rect, Menu, hFont);
