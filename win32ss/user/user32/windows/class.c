@@ -1091,6 +1091,16 @@ LONG_PTR IntGetWindowLong( HWND hwnd, INT offset, UINT size, BOOL unicode )
     LONG_PTR retvalue = 0;
     WND *wndPtr;
 
+#ifdef _WIN64
+    if (size == sizeof(LONG) && offset < 0 &&
+        offset != GWL_STYLE && offset != GWL_EXSTYLE &&
+        offset != GWLP_ID && offset != GWLP_USERDATA)
+    {
+        SetLastError(ERROR_INVALID_INDEX);
+        return 0;
+    }
+#endif
+
     if (offset == GWLP_HWNDPARENT)
     {
         HWND parent = GetAncestor( hwnd, GA_PARENT );
