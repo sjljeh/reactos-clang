@@ -9,6 +9,7 @@
 
 #include <hal.h>
 #include "apicp.h"
+#include "tsc.h"
 #include <smp.h>
 #define NDEBUG
 #include <debug.h>
@@ -75,6 +76,13 @@ HalpInitProcessor(
 
     /* Initialize the local APIC for this cpu */
     ApicInitializeLocalApic(ProcessorNumber);
+
+    if (ProcessorNumber != 0)
+    {
+        /* Phase zero calibrated this value before AP startup. */
+        KeGetPcr()->StallScaleFactor = max(
+            1, (ULONG)(HalpCpuClockFrequency.QuadPart / 1000000));
+    }
 
     /* Record and verify the firmware-to-NT processor association. */
     NT_ASSERT(HalpProcessorIdentity[ProcessorNumber].LapicId ==

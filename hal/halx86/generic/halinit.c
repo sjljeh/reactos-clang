@@ -58,11 +58,11 @@ HalInitializeProcessor(
     IN ULONG ProcessorNumber,
     IN PLOADER_PARAMETER_BLOCK LoaderBlock)
 {
+    /* Start with a conservative value; a HAL may replace it below. */
+    KeGetPcr()->StallScaleFactor = INITIAL_STALL_COUNT;
+
     /* Hal specific initialization for this cpu */
     HalpInitProcessor(ProcessorNumber, LoaderBlock);
-
-    /* Set default stall count */
-    KeGetPcr()->StallScaleFactor = INITIAL_STALL_COUNT;
 
     if (ProcessorNumber == 0)
     {
