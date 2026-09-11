@@ -1112,7 +1112,7 @@ LONG_PTR IntGetWindowLong( HWND hwnd, INT offset, UINT size, BOOL unicode )
             SetLastError( ERROR_INVALID_INDEX );
             return 0;
         }
-        retvalue = *((LONG_PTR *)((PCHAR)(wndPtr + 1) + offset));
+        memcpy(&retvalue, (PCHAR)(wndPtr + 1) + offset, size);
 
         /* WINE: special case for dialog window procedure */
         //if ((offset == DWLP_DLGPROC) && (size == sizeof(LONG_PTR)) && (wndPtr->flags & WIN_ISDIALOG))
