@@ -460,8 +460,8 @@ EngAssociateSurface(
     pso->dhpdev = ppdev->dhpdev;
 
     /* Hook up specified functions */
-    psurf->flags &= ~HOOK_FLAGS;
-    psurf->flags |= (flHooks & HOOK_FLAGS);
+    psurf->flags &= ~(HOOK_FLAGS | HOOK_SYNCHRONIZEACCESS);
+    psurf->flags |= (flHooks & (HOOK_FLAGS | HOOK_SYNCHRONIZEACCESS));
 
     /* Assign the PDEV's palette */
     ppal = PALETTE_ShareLockPalette(ppdev->devinfo.hpalDefault);
@@ -507,8 +507,8 @@ EngModifySurface(
     pso->dhpdev = ppdev->dhpdev;
 
     /* Hook up specified functions */
-    psurf->flags &= ~HOOK_FLAGS;
-    psurf->flags |= (flHooks & HOOK_FLAGS);
+    psurf->flags &= ~(HOOK_FLAGS | HOOK_SYNCHRONIZEACCESS);
+    psurf->flags |= (flHooks & (HOOK_FLAGS | HOOK_SYNCHRONIZEACCESS));
 
     /* Assign the PDEV's palette */
     ppal = PALETTE_ShareLockPalette(ppdev->devinfo.hpalDefault);

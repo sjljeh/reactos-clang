@@ -47,22 +47,25 @@ MouseSafetyOnDrawStart(
 {
     LONG tmp;
     GDIPOINTER *pgp;
+    BOOL bResult = FALSE;
 
     ASSERT(ppdev != NULL);
     ASSERT(ppdev->pSurface != NULL);
 
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusive(&ppdev->PointerLock);
     pgp = &ppdev->Pointer;
 
     if (pgp->Exclude.right == -1)
     {
-        return FALSE;
+        goto Exit;
     }
 
     ppdev->SafetyRemoveCount++;
 
     if (ppdev->SafetyRemoveLevel != 0)
     {
-        return FALSE;
+        goto Exit;
     }
 
     if (HazardX1 > HazardX2)
@@ -90,7 +93,12 @@ MouseSafetyOnDrawStart(
             EngMovePointer(&ppdev->pSurface->SurfObj, -1, -1, NULL);
     }
 
-    return TRUE;
+    bResult = TRUE;
+
+Exit:
+    ExReleasePushLockExclusive(&ppdev->PointerLock);
+    KeLeaveCriticalRegion();
+    return bResult;
 }
 
 /*
@@ -103,20 +111,23 @@ MouseSafetyOnDrawEnd(
     _Inout_ PPDEVOBJ ppdev)
 {
     GDIPOINTER *pgp;
+    BOOL bResult = FALSE;
 
     ASSERT(ppdev != NULL);
     ASSERT(ppdev->pSurface != NULL);
 
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusive(&ppdev->PointerLock);
     pgp = &ppdev->Pointer;
 
     if (pgp->Exclude.right == -1)
     {
-        return FALSE;
+        goto Exit;
     }
 
     if (--ppdev->SafetyRemoveCount >= ppdev->SafetyRemoveLevel)
     {
-        return FALSE;
+        goto Exit;
     }
 
     if (ppdev->flFlags & PDEV_HARDWARE_POINTER)
@@ -131,8 +142,12 @@ MouseSafetyOnDrawEnd(
                        &pgp->Exclude);
 
     ppdev->SafetyRemoveLevel = 0;
+    bResult = TRUE;
 
-    return TRUE;
+Exit:
+    ExReleasePushLockExclusive(&ppdev->PointerLock);
+    KeLeaveCriticalRegion();
+    return bResult;
 }
 
 /* SOFTWARE MOUSE POINTER IMPLEMENTATION **************************************/

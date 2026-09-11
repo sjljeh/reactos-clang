@@ -497,9 +497,287 @@ DC_vUpdateDC(PDC pdc)
     pdc->pdcattr->ulDirty_ |= DIRTY_DEFAULT ;
 }
 
-/* Prepare a blit for up to 2 DCs */
-/* rc1 and rc2 are the rectangles where we want to draw or
- * from where we take pixels. */
+#define DC_DRAWLOCK_ACTIVE 0x00000001
+#define DC_DRAWLOCK_TILED  0x00000002
+#define DC_DRAWLOCK_WRITE  0x00000004
+#define DC_DRAWLOCK_READ   0x00000008
+
+static
+BOOL
+DC_bGetDrawRect(
+    _In_ PDC pdc,
+    _In_opt_ const RECTL *prcl,
+    _In_ BOOL bDestination,
+    _Out_ PRECTL prclDraw)
+{
+    RECTL rclSurface, rclTemp;
+    LONG lTemp;
+
+    *prclDraw = prcl ? *prcl : pdc->erclClip;
+    if (prclDraw->left > prclDraw->right)
+    {
+        lTemp = prclDraw->left;
+        prclDraw->left = prclDraw->right;
+        prclDraw->right = lTemp;
+    }
+    if (prclDraw->top > prclDraw->bottom)
+    {
+        lTemp = prclDraw->top;
+        prclDraw->top = prclDraw->bottom;
+        prclDraw->bottom = lTemp;
+    }
+
+    if (bDestination)
+    {
+        if (!RECTL_bIntersectRect(&rclTemp, prclDraw, &pdc->erclClip))
+            return FALSE;
+        *prclDraw = rclTemp;
+    }
+
+    rclSurface.left = 0;
+    rclSurface.top = 0;
+    rclSurface.right = pdc->dclevel.sizl.cx;
+    rclSurface.bottom = pdc->dclevel.sizl.cy;
+    return RECTL_bIntersectRect(prclDraw, prclDraw, &rclSurface);
+}
+
+static
+VOID
+DC_vIncludePointerRect(
+    _In_ PPDEVOBJ ppdev,
+    _Inout_ PRECTL prcl)
+{
+    PRECTL prclPointer = &ppdev->Pointer.Exclude;
+
+    if ((prclPointer->right == -1) ||
+        (prclPointer->right < prcl->left) ||
+        (prclPointer->left > prcl->right) ||
+        (prclPointer->bottom < prcl->top) ||
+        (prclPointer->top > prcl->bottom))
+    {
+        return;
+    }
+
+    prcl->left = min(prcl->left, prclPointer->left);
+    prcl->top = min(prcl->top, prclPointer->top);
+    prcl->right = max(prcl->right, prclPointer->right);
+    prcl->bottom = max(prcl->bottom, prclPointer->bottom);
+    prcl->left = max(prcl->left, 0);
+    prcl->top = max(prcl->top, 0);
+    prcl->right = min(prcl->right, ppdev->pSurface->SurfObj.sizlBitmap.cx);
+    prcl->bottom = min(prcl->bottom, ppdev->pSurface->SurfObj.sizlBitmap.cy);
+}
+
+static
+BOOL
+DC_bTileIntersectsRect(
+    _In_ ULONG Column,
+    _In_ ULONG Row,
+    _In_ const RECTL *prcl)
+{
+    ULONG FirstColumn, LastColumn, FirstRow, LastRow;
+
+    if (RECTL_bIsEmptyRect(prcl))
+        return FALSE;
+
+    FirstColumn = ((ULONG)prcl->left) >> PDEV_DRAW_TILE_SHIFT;
+    LastColumn = ((ULONG)(prcl->right - 1)) >> PDEV_DRAW_TILE_SHIFT;
+    FirstRow = ((ULONG)prcl->top) >> PDEV_DRAW_TILE_SHIFT;
+    LastRow = ((ULONG)(prcl->bottom - 1)) >> PDEV_DRAW_TILE_SHIFT;
+    return (Column >= FirstColumn) && (Column <= LastColumn) &&
+           (Row >= FirstRow) && (Row <= LastRow);
+}
+
+static
+VOID
+DC_vLockDrawTiles(
+    _Inout_ PDC pdc)
+{
+    PPDEVOBJ ppdev = pdc->ppdev;
+    ULONG FirstColumn, LastColumn, FirstRow, LastRow, Column, Row;
+    BOOL bWrite = !!(pdc->flDrawLock & DC_DRAWLOCK_WRITE);
+    BOOL bRead = !!(pdc->flDrawLock & DC_DRAWLOCK_READ);
+
+    FirstColumn = ppdev->cDrawLockColumns;
+    FirstRow = ppdev->cDrawLockRows;
+    LastColumn = LastRow = 0;
+
+    if (bWrite)
+    {
+        FirstColumn = ((ULONG)pdc->erclDrawLockWrite.left) >> PDEV_DRAW_TILE_SHIFT;
+        LastColumn = ((ULONG)(pdc->erclDrawLockWrite.right - 1)) >> PDEV_DRAW_TILE_SHIFT;
+        FirstRow = ((ULONG)pdc->erclDrawLockWrite.top) >> PDEV_DRAW_TILE_SHIFT;
+        LastRow = ((ULONG)(pdc->erclDrawLockWrite.bottom - 1)) >> PDEV_DRAW_TILE_SHIFT;
+    }
+    if (bRead)
+    {
+        FirstColumn = min(FirstColumn,
+                          ((ULONG)pdc->erclDrawLockRead.left) >> PDEV_DRAW_TILE_SHIFT);
+        LastColumn = max(LastColumn,
+                         ((ULONG)(pdc->erclDrawLockRead.right - 1)) >> PDEV_DRAW_TILE_SHIFT);
+        FirstRow = min(FirstRow,
+                       ((ULONG)pdc->erclDrawLockRead.top) >> PDEV_DRAW_TILE_SHIFT);
+        LastRow = max(LastRow,
+                      ((ULONG)(pdc->erclDrawLockRead.bottom - 1)) >> PDEV_DRAW_TILE_SHIFT);
+    }
+
+    if (!bWrite && !bRead)
+        return;
+
+    ASSERT(LastColumn < ppdev->cDrawLockColumns);
+    ASSERT(LastRow < ppdev->cDrawLockRows);
+    for (Row = FirstRow; Row <= LastRow; Row++)
+    {
+        for (Column = FirstColumn; Column <= LastColumn; Column++)
+        {
+            if ((bWrite && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockWrite)) ||
+                (bRead && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockRead)))
+            {
+                ExAcquirePushLockExclusive(
+                    &ppdev->pDrawLocks[Row * ppdev->cDrawLockColumns + Column]);
+            }
+        }
+    }
+}
+
+static
+VOID
+DC_vUnlockDrawTiles(
+    _Inout_ PDC pdc)
+{
+    PPDEVOBJ ppdev = pdc->ppdev;
+    ULONG FirstColumn, LastColumn, FirstRow, LastRow, Column, Row;
+    BOOL bWrite = !!(pdc->flDrawLock & DC_DRAWLOCK_WRITE);
+    BOOL bRead = !!(pdc->flDrawLock & DC_DRAWLOCK_READ);
+
+    FirstColumn = ppdev->cDrawLockColumns;
+    FirstRow = ppdev->cDrawLockRows;
+    LastColumn = LastRow = 0;
+    if (bWrite)
+    {
+        FirstColumn = ((ULONG)pdc->erclDrawLockWrite.left) >> PDEV_DRAW_TILE_SHIFT;
+        LastColumn = ((ULONG)(pdc->erclDrawLockWrite.right - 1)) >> PDEV_DRAW_TILE_SHIFT;
+        FirstRow = ((ULONG)pdc->erclDrawLockWrite.top) >> PDEV_DRAW_TILE_SHIFT;
+        LastRow = ((ULONG)(pdc->erclDrawLockWrite.bottom - 1)) >> PDEV_DRAW_TILE_SHIFT;
+    }
+    if (bRead)
+    {
+        FirstColumn = min(FirstColumn,
+                          ((ULONG)pdc->erclDrawLockRead.left) >> PDEV_DRAW_TILE_SHIFT);
+        LastColumn = max(LastColumn,
+                         ((ULONG)(pdc->erclDrawLockRead.right - 1)) >> PDEV_DRAW_TILE_SHIFT);
+        FirstRow = min(FirstRow,
+                       ((ULONG)pdc->erclDrawLockRead.top) >> PDEV_DRAW_TILE_SHIFT);
+        LastRow = max(LastRow,
+                      ((ULONG)(pdc->erclDrawLockRead.bottom - 1)) >> PDEV_DRAW_TILE_SHIFT);
+    }
+
+    if (!bWrite && !bRead)
+        return;
+
+    Row = LastRow;
+    for (;;)
+    {
+        Column = LastColumn;
+        for (;;)
+        {
+            if ((bWrite && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockWrite)) ||
+                (bRead && DC_bTileIntersectsRect(Column, Row, &pdc->erclDrawLockRead)))
+            {
+                ExReleasePushLockExclusive(
+                    &ppdev->pDrawLocks[Row * ppdev->cDrawLockColumns + Column]);
+            }
+            if (Column == FirstColumn)
+                break;
+            Column--;
+        }
+        if (Row == FirstRow)
+            break;
+        Row--;
+    }
+}
+
+static
+VOID
+DC_vLockPdevForDraw(
+    _Inout_ PDC pdcOwner,
+    _Inout_opt_ PDC pdcWrite,
+    _In_opt_ const RECTL *prclWrite,
+    _Inout_opt_ PDC pdcRead,
+    _In_opt_ const RECTL *prclRead)
+{
+    PPDEVOBJ ppdev = pdcOwner->ppdev;
+    BOOL bTiled;
+
+    ASSERT(pdcOwner->dctype == DCTYPE_DIRECT);
+    ASSERT(pdcOwner->flDrawLock == 0);
+
+    /* Hold mode changes out while deciding which surface-locking path to use. */
+    EngAcquireSemaphoreShared(ppdev->hsemDevLock);
+    bTiled = (ppdev->pDrawLocks != NULL) &&
+             (ppdev->pSurface != NULL) &&
+             !(ppdev->pSurface->flags & HOOK_SYNCHRONIZEACCESS) &&
+             !(ppdev->flFlags & PDEV_DRIVER_PUNTED_CALL);
+    if (!bTiled)
+    {
+        EngReleaseSemaphore(ppdev->hsemDevLock);
+        EngAcquireSemaphore(ppdev->hsemDevLock);
+        pdcOwner->flDrawLock = DC_DRAWLOCK_ACTIVE;
+    }
+    else
+    {
+        pdcOwner->flDrawLock = DC_DRAWLOCK_ACTIVE | DC_DRAWLOCK_TILED;
+    }
+
+    if (pdcWrite && (ppdev->pSurface != pdcWrite->dclevel.pSurface))
+        DC_vUpdateDC(pdcWrite);
+    if (pdcRead && (pdcRead != pdcWrite) &&
+        (ppdev->pSurface != pdcRead->dclevel.pSurface))
+    {
+        DC_vUpdateDC(pdcRead);
+    }
+
+    if (!bTiled)
+        return;
+
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusive(&ppdev->PointerLock);
+    if (pdcWrite && DC_bGetDrawRect(pdcWrite, prclWrite, TRUE,
+                                    &pdcOwner->erclDrawLockWrite))
+    {
+        DC_vIncludePointerRect(ppdev, &pdcOwner->erclDrawLockWrite);
+        pdcOwner->flDrawLock |= DC_DRAWLOCK_WRITE;
+    }
+    if (pdcRead && DC_bGetDrawRect(pdcRead, prclRead, FALSE,
+                                   &pdcOwner->erclDrawLockRead))
+    {
+        DC_vIncludePointerRect(ppdev, &pdcOwner->erclDrawLockRead);
+        pdcOwner->flDrawLock |= DC_DRAWLOCK_READ;
+    }
+    ExReleasePushLockExclusive(&ppdev->PointerLock);
+    KeLeaveCriticalRegion();
+
+    KeEnterCriticalRegion();
+    DC_vLockDrawTiles(pdcOwner);
+}
+
+static
+VOID
+DC_vUnlockPdevForDraw(
+    _Inout_ PDC pdc)
+{
+    ASSERT(pdc->flDrawLock & DC_DRAWLOCK_ACTIVE);
+    if (pdc->flDrawLock & DC_DRAWLOCK_TILED)
+    {
+        DC_vUnlockDrawTiles(pdc);
+        KeLeaveCriticalRegion();
+    }
+    pdc->flDrawLock = 0;
+    EngReleaseSemaphore(pdc->ppdev->hsemDevLock);
+}
+
+/* Prepare a blit for up to two DCs. Destination pixels and source pixels are
+ * both protected; visible non-overlapping screen tiles can proceed in parallel. */
 VOID
 FASTCALL
 DC_vPrepareDCsForBlit(
@@ -511,68 +789,66 @@ DC_vPrepareDCsForBlit(
     PDC pdcFirst, pdcSecond;
     const RECT *prcFirst, *prcSecond;
 
-    /* Update brushes */
     if (pdcDest->pdcattr->ulDirty_ & (DIRTY_FILL | DC_BRUSH_DIRTY))
         DC_vUpdateFillBrush(pdcDest);
     if (pdcDest->pdcattr->ulDirty_ & (DIRTY_LINE | DC_PEN_DIRTY))
         DC_vUpdateLineBrush(pdcDest);
-    if(pdcDest->pdcattr->ulDirty_ & DIRTY_TEXT)
+    if (pdcDest->pdcattr->ulDirty_ & DIRTY_TEXT)
         DC_vUpdateTextBrush(pdcDest);
 
-    /* Lock them in good order */
-    if (pdcSrc)
+    if (pdcDest->fs & DC_DIRTY_RAO)
+        CLIPPING_UpdateGCRegion(pdcDest);
+
+    /* A same-PDEV transfer needs one ordered tile set, not recursive locks. */
+    if (pdcSrc &&
+        (pdcDest->dctype == DCTYPE_DIRECT) &&
+        (pdcSrc->dctype == DCTYPE_DIRECT) &&
+        (pdcDest->ppdev == pdcSrc->ppdev))
     {
-        if((ULONG_PTR)pdcDest->ppdev->hsemDevLock >=
-           (ULONG_PTR)pdcSrc->ppdev->hsemDevLock)
-        {
-            pdcFirst = pdcDest;
-            prcFirst = rcDest;
-            pdcSecond = pdcSrc;
-            prcSecond = rcSrc;
-        }
-        else
-        {
-            pdcFirst = pdcSrc;
-            prcFirst = rcSrc;
-            pdcSecond = pdcDest;
-            prcSecond = rcDest;
-        }
+        DC_vLockPdevForDraw(pdcDest, pdcDest, rcDest, pdcSrc, rcSrc);
+        if (!rcDest) rcDest = &pdcDest->erclClip;
+        if (!rcSrc) rcSrc = &pdcSrc->erclClip;
+        MouseSafetyOnDrawStart(pdcDest->ppdev,
+                               rcDest->left, rcDest->top,
+                               rcDest->right, rcDest->bottom);
+        MouseSafetyOnDrawStart(pdcSrc->ppdev,
+                               rcSrc->left, rcSrc->top,
+                               rcSrc->right, rcSrc->bottom);
+#if DBG
+        pdcDest->fs |= DC_PREPARED;
+        pdcSrc->fs |= DC_PREPARED;
+#endif
+        return;
+    }
+
+    if (pdcSrc &&
+        ((ULONG_PTR)pdcDest->ppdev->hsemDevLock <
+         (ULONG_PTR)pdcSrc->ppdev->hsemDevLock))
+    {
+        pdcFirst = pdcSrc;
+        prcFirst = rcSrc;
+        pdcSecond = pdcDest;
+        prcSecond = rcDest;
     }
     else
     {
         pdcFirst = pdcDest;
         prcFirst = rcDest;
-        pdcSecond = NULL;
-        prcSecond = NULL;
-    }
-
-    if (pdcDest->fs & DC_DIRTY_RAO)
-        CLIPPING_UpdateGCRegion(pdcDest);
-
-    /* Lock and update first DC */
-    if (pdcFirst->dctype == DCTYPE_DIRECT)
-    {
-        EngAcquireSemaphore(pdcFirst->ppdev->hsemDevLock);
-
-        /* Update surface if needed */
-        if (pdcFirst->ppdev->pSurface != pdcFirst->dclevel.pSurface)
-        {
-            DC_vUpdateDC(pdcFirst);
-        }
+        pdcSecond = pdcSrc;
+        prcSecond = rcSrc;
     }
 
     if (pdcFirst->dctype == DCTYPE_DIRECT)
     {
-        if (!prcFirst)
-            prcFirst = &pdcFirst->erclClip;
-
+        if (pdcFirst == pdcDest)
+            DC_vLockPdevForDraw(pdcFirst, pdcFirst, prcFirst, NULL, NULL);
+        else
+            DC_vLockPdevForDraw(pdcFirst, NULL, NULL, pdcFirst, prcFirst);
+        if (!prcFirst) prcFirst = &pdcFirst->erclClip;
         MouseSafetyOnDrawStart(pdcFirst->ppdev,
-                               prcFirst->left,
-                               prcFirst->top,
-                               prcFirst->right,
-                               prcFirst->bottom) ;
+                               prcFirst->left, prcFirst->top,
+                               prcFirst->right, prcFirst->bottom);
     }
-
 #if DBG
     pdcFirst->fs |= DC_PREPARED;
 #endif
@@ -580,29 +856,17 @@ DC_vPrepareDCsForBlit(
     if (!pdcSecond)
         return;
 
-    /* Lock and update second DC */
     if (pdcSecond->dctype == DCTYPE_DIRECT)
     {
-        EngAcquireSemaphore(pdcSecond->ppdev->hsemDevLock);
-
-        /* Update surface if needed */
-        if (pdcSecond->ppdev->pSurface != pdcSecond->dclevel.pSurface)
-        {
-            DC_vUpdateDC(pdcSecond);
-        }
-    }
-
-    if (pdcSecond->dctype == DCTYPE_DIRECT)
-    {
-        if (!prcSecond)
-            prcSecond = &pdcSecond->erclClip;
+        if (pdcSecond == pdcDest)
+            DC_vLockPdevForDraw(pdcSecond, pdcSecond, prcSecond, NULL, NULL);
+        else
+            DC_vLockPdevForDraw(pdcSecond, NULL, NULL, pdcSecond, prcSecond);
+        if (!prcSecond) prcSecond = &pdcSecond->erclClip;
         MouseSafetyOnDrawStart(pdcSecond->ppdev,
-                               prcSecond->left,
-                               prcSecond->top,
-                               prcSecond->right,
-                               prcSecond->bottom) ;
+                               prcSecond->left, prcSecond->top,
+                               prcSecond->right, prcSecond->bottom);
     }
-
 #if DBG
     pdcSecond->fs |= DC_PREPARED;
 #endif
@@ -613,10 +877,25 @@ VOID
 FASTCALL
 DC_vFinishBlit(PDC pdc1, PDC pdc2)
 {
+    if (pdc2 &&
+        (pdc1->dctype == DCTYPE_DIRECT) &&
+        (pdc2->dctype == DCTYPE_DIRECT) &&
+        (pdc1->ppdev == pdc2->ppdev))
+    {
+        MouseSafetyOnDrawEnd(pdc1->ppdev);
+        MouseSafetyOnDrawEnd(pdc2->ppdev);
+        DC_vUnlockPdevForDraw(pdc1);
+#if DBG
+        pdc1->fs &= ~DC_PREPARED;
+        pdc2->fs &= ~DC_PREPARED;
+#endif
+        return;
+    }
+
     if (pdc1->dctype == DCTYPE_DIRECT)
     {
         MouseSafetyOnDrawEnd(pdc1->ppdev);
-        EngReleaseSemaphore(pdc1->ppdev->hsemDevLock);
+        DC_vUnlockPdevForDraw(pdc1);
     }
 #if DBG
     pdc1->fs &= ~DC_PREPARED;
@@ -627,7 +906,7 @@ DC_vFinishBlit(PDC pdc1, PDC pdc2)
         if (pdc2->dctype == DCTYPE_DIRECT)
         {
             MouseSafetyOnDrawEnd(pdc2->ppdev);
-            EngReleaseSemaphore(pdc2->ppdev->hsemDevLock);
+            DC_vUnlockPdevForDraw(pdc2);
         }
 #if DBG
         pdc2->fs &= ~DC_PREPARED;

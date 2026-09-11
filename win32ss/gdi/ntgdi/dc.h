@@ -105,6 +105,9 @@ typedef struct _DC
   PVOID       hsem;   /* PERESOURCE aka HSEMAPHORE */
   FLONG       flGraphicsCaps;
   FLONG       flGraphicsCaps2;
+  ULONG       flDrawLock;
+  RECTL       erclDrawLockWrite;
+  RECTL       erclDrawLockRead;
   _Notnull_ PDC_ATTR    pdcattr;
   DCLEVEL     dclevel;
   DC_ATTR     dcattr;

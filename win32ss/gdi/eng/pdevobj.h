@@ -22,6 +22,10 @@ enum _PDEVFLAGS
     PDEV_CLONE_DEVICE        = 0x00080000
 };
 
+/* Direct-surface drawing is partitioned into 64-by-64 pixel tiles. */
+#define PDEV_DRAW_TILE_SHIFT 6
+#define PDEV_MAX_DRAW_TILES  16384
+
 /* Type definitions ***********************************************************/
 
 typedef struct _GDIPOINTER /* should stay private to ENG? No, part of PDEVOBJ aka HDEV aka PDEV. */
@@ -88,6 +92,10 @@ typedef struct _PDEVOBJ
 //  FLONG                     flAccelerated;
     HSEMAPHORE                hsemDevLock;    /* Device lock. */
 //  HSEMAPHORE                hsemPointer;
+    EX_PUSH_LOCK              PointerLock;    /* Serializes software-pointer state. */
+    PEX_PUSH_LOCK             pDrawLocks;     /* Direct-surface tile locks. */
+    ULONG                     cDrawLockColumns;
+    ULONG                     cDrawLockRows;
     POINTL                    ptlPointer;
 //  SIZEL                     szlPointer;
 //  SPRITESTATE               SpriteState;

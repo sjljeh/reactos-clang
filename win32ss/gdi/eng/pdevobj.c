@@ -59,6 +59,45 @@ DbgLookupDHPDEV(DHPDEV dhpdev)
 }
 #endif
 
+static
+VOID
+PDEVOBJ_vInitializeDrawLocks(
+    _Inout_ PPDEVOBJ ppdev)
+{
+    ULONG i, cColumns, cRows, cLocks;
+    SIZEL sizl;
+
+    if (ppdev->pDrawLocks || !ppdev->pSurface)
+        return;
+
+    sizl = ppdev->pSurface->SurfObj.sizlBitmap;
+    if ((sizl.cx <= 0) || (sizl.cy <= 0))
+        return;
+
+    cColumns = ((ULONG)sizl.cx >> PDEV_DRAW_TILE_SHIFT) +
+               ((((ULONG)sizl.cx & ((1 << PDEV_DRAW_TILE_SHIFT) - 1)) != 0));
+    cRows = ((ULONG)sizl.cy >> PDEV_DRAW_TILE_SHIFT) +
+            ((((ULONG)sizl.cy & ((1 << PDEV_DRAW_TILE_SHIFT) - 1)) != 0));
+    if ((cColumns > (~0UL) / cRows) ||
+        ((cLocks = cColumns * cRows) > PDEV_MAX_DRAW_TILES) ||
+        (cLocks > (~0UL) / sizeof(EX_PUSH_LOCK)))
+    {
+        return;
+    }
+
+    ppdev->pDrawLocks = ExAllocatePoolWithTag(PagedPool,
+                                              cLocks * sizeof(EX_PUSH_LOCK),
+                                              GDITAG_PDEV);
+    if (!ppdev->pDrawLocks)
+        return;
+
+    ppdev->cDrawLockColumns = cColumns;
+    ppdev->cDrawLockRows = cRows;
+    for (i = 0; i < cLocks; i++)
+        ExInitializePushLock(&ppdev->pDrawLocks[i]);
+    ppdev->flFlags |= PDEV_SHARED_DEVLOCK;
+}
+
 PPDEVOBJ
 PDEVOBJ_AllocPDEV(VOID)
 {
@@ -69,6 +108,7 @@ PDEVOBJ_AllocPDEV(VOID)
         return NULL;
 
     RtlZeroMemory(ppdev, sizeof(PDEVOBJ));
+    ExInitializePushLock(&ppdev->PointerLock);
 
     ppdev->hsemDevLock = EngCreateSemaphore();
     if (ppdev->hsemDevLock == NULL)
@@ -93,6 +133,8 @@ PDEVOBJ_vDeletePDEV(
     PPDEVOBJ ppdev)
 {
     EngDeleteSemaphore(ppdev->hsemDevLock);
+    if (ppdev->pDrawLocks)
+        ExFreePoolWithTag(ppdev->pDrawLocks, GDITAG_PDEV);
     if (ppdev->pdmwDev)
         ExFreePoolWithTag(ppdev->pdmwDev, GDITAG_DEVMODE);
     if (ppdev->pEDDgpl)
@@ -329,6 +371,7 @@ PDEVOBJ_pSurface(
         /* Get a reference to the surface */
         ppdev->pSurface = SURFACE_ShareLockSurface(hsurf);
         NT_ASSERT(ppdev->pSurface != NULL);
+        PDEVOBJ_vInitializeDrawLocks(ppdev);
     }
 
     /* Increment reference count */
@@ -669,6 +712,23 @@ PDEVOBJ_bDynamicModeChange(
     SwitchPointer(&ppdev->pSurface, &ppdev2->pSurface);
     ppdev->pSurface->SurfObj.hdev = (HDEV)ppdev;
     ppdev2->pSurface->SurfObj.hdev = (HDEV)ppdev2;
+
+    /* Keep each surface together with the tile grid for its dimensions. */
+    SwitchPointer(&ppdev->pDrawLocks, &ppdev2->pDrawLocks);
+    temp.StateFlags = ppdev->cDrawLockColumns;
+    ppdev->cDrawLockColumns = ppdev2->cDrawLockColumns;
+    ppdev2->cDrawLockColumns = temp.StateFlags;
+    temp.StateFlags = ppdev->cDrawLockRows;
+    ppdev->cDrawLockRows = ppdev2->cDrawLockRows;
+    ppdev2->cDrawLockRows = temp.StateFlags;
+    if (ppdev->pDrawLocks)
+        ppdev->flFlags |= PDEV_SHARED_DEVLOCK;
+    else
+        ppdev->flFlags &= ~PDEV_SHARED_DEVLOCK;
+    if (ppdev2->pDrawLocks)
+        ppdev2->flFlags |= PDEV_SHARED_DEVLOCK;
+    else
+        ppdev2->flFlags &= ~PDEV_SHARED_DEVLOCK;
 
     /* Exchange devinfo */
     temp.devinfo = ppdev->devinfo;
