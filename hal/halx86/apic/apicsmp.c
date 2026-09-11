@@ -86,7 +86,8 @@ ApicRequestGlobalInterrupt(
     Icr.MessageType = MessageType;
     Icr.DestinationMode = APIC_DM_Physical;
     Icr.DeliveryStatus = 0;
-    Icr.Level = 0;
+    /* The level bit must be asserted for every IPI except INIT de-assert. */
+    Icr.Level = 1;
     Icr.TriggerMode = TriggerMode;
     Icr.RemoteReadStatus = 0;
     Icr.DestinationShortHand = DestinationShortHand;
@@ -115,20 +116,18 @@ ApicStartApplicationProcessor(
     ASSERT((StartupLoc.QuadPart & 0xFFF) == 0);
     ASSERT((StartupLoc.QuadPart & 0xFFF00FFF) == 0);
 
-    /* Init IPI */
+    /* Send INIT and allow the target processor to enter wait-for-SIPI. */
     ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, 0,
         APIC_MT_INIT, APIC_TGM_Edge, APIC_DSH_Destination);
+    KeStallExecutionProcessor(10000);
 
-    /* De-Assert Init IPI */
-    ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, 0,
-        APIC_MT_INIT, APIC_TGM_Level, APIC_DSH_Destination);
-
-    /* Stall execution for a bit to give APIC time: MPS Spec - B.4 */
-    KeStallExecutionProcessor(200);
-
-    /* Startup IPI */
+    /* Send the two STARTUP IPIs prescribed by the MP specification. */
     ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, (StartupLoc.LowPart) >> 12,
         APIC_MT_Startup, APIC_TGM_Edge, APIC_DSH_Destination);
+    KeStallExecutionProcessor(200);
+    ApicRequestGlobalInterrupt(HalpProcessorIdentity[NTProcessorNumber].LapicId, (StartupLoc.LowPart) >> 12,
+        APIC_MT_Startup, APIC_TGM_Edge, APIC_DSH_Destination);
+    KeStallExecutionProcessor(200);
 }
 
 /* HAL IPI FUNCTIONS **********************************************************/
