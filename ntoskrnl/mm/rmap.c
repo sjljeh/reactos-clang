@@ -20,6 +20,29 @@
 
 static NPAGED_LOOKASIDE_LIST RmapLookasideList;
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+#define RMAP_ENTRY_FREE   0
+#define RMAP_ENTRY_IN_USE 1
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+static
+PVOID
+NTAPI
+RmapListAllocate(
+    _In_ POOL_TYPE PoolType,
+    _In_ SIZE_T NumberOfBytes,
+    _In_ ULONG Tag)
+{
+    PMM_RMAP_ENTRY Entry;
+
+    Entry = ExAllocatePoolWithTag(PoolType, NumberOfBytes, Tag);
+    if (Entry != NULL)
+        Entry->InUse = RMAP_ENTRY_FREE;
+
+    return Entry;
+}
+#endif
+
 /* FUNCTIONS ****************************************************************/
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -29,7 +52,73 @@ NTAPI
 RmapListFree(
     _In_ __drv_freesMem(Mem) PVOID P)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    PMM_RMAP_ENTRY Entry = P;
+
+    if (Entry->InUse != RMAP_ENTRY_FREE)
+    {
+        KeBugCheckEx(MEMORY_MANAGEMENT,
+                     TAG_RMAP,
+                     (ULONG_PTR)Entry,
+                     RMAP_ENTRY_FREE,
+                     Entry->InUse);
+    }
+#endif
     ExFreePoolWithTag(P, TAG_RMAP);
+}
+
+static
+PMM_RMAP_ENTRY
+NTAPI
+MiAllocateRmapEntry(VOID)
+{
+    PMM_RMAP_ENTRY Entry;
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    LONG OldState;
+#endif
+
+    Entry = ExAllocateFromNPagedLookasideList(&RmapLookasideList);
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    if (Entry != NULL)
+    {
+        OldState = InterlockedCompareExchange(&Entry->InUse,
+                                              RMAP_ENTRY_IN_USE,
+                                              RMAP_ENTRY_FREE);
+        if (OldState != RMAP_ENTRY_FREE)
+        {
+            KeBugCheckEx(MEMORY_MANAGEMENT,
+                         TAG_RMAP,
+                         (ULONG_PTR)Entry,
+                         RMAP_ENTRY_FREE,
+                         OldState);
+        }
+    }
+#endif
+    return Entry;
+}
+
+static
+VOID
+NTAPI
+MiFreeRmapEntry(
+    _In_ PMM_RMAP_ENTRY Entry)
+{
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    LONG OldState;
+
+    OldState = InterlockedCompareExchange(&Entry->InUse,
+                                          RMAP_ENTRY_FREE,
+                                          RMAP_ENTRY_IN_USE);
+    if (OldState != RMAP_ENTRY_IN_USE)
+    {
+        KeBugCheckEx(MEMORY_MANAGEMENT,
+                     TAG_RMAP,
+                     (ULONG_PTR)Entry,
+                     RMAP_ENTRY_IN_USE,
+                     OldState);
+    }
+#endif
+    ExFreeToNPagedLookasideList(&RmapLookasideList, Entry);
 }
 
 CODE_SEG("INIT")
@@ -38,7 +127,11 @@ NTAPI
 MmInitializeRmapList(VOID)
 {
     ExInitializeNPagedLookasideList (&RmapLookasideList,
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+                                     RmapListAllocate,
+#else
                                      NULL,
+#endif
                                      RmapListFree,
                                      0,
                                      sizeof(MM_RMAP_ENTRY),
@@ -335,7 +428,7 @@ MmInsertRmap(PFN_NUMBER Page, PEPROCESS Process,
     if (!RMAP_IS_SEGMENT(Address))
         Address = (PVOID)PAGE_ROUND_DOWN(Address);
 
-    new_entry = ExAllocateFromNPagedLookasideList(&RmapLookasideList);
+    new_entry = MiAllocateRmapEntry();
     if (new_entry == NULL)
     {
         KeBugCheck(MEMORY_MANAGEMENT);
@@ -435,7 +528,7 @@ MmDeleteRmap(PFN_NUMBER Page, PEPROCESS Process,
             }
             MiReleasePfnLock(OldIrql);
 
-            ExFreeToNPagedLookasideList(&RmapLookasideList, current_entry);
+            MiFreeRmapEntry(current_entry);
             if (!RMAP_IS_SEGMENT(Address))
             {
                 ASSERT(Process != NULL);
@@ -523,7 +616,7 @@ MmDeleteSectionAssociation(PFN_NUMBER Page)
                 previous_entry->Next = current_entry->Next;
             }
             MiReleasePfnLock(OldIrql);
-            ExFreeToNPagedLookasideList(&RmapLookasideList, current_entry);
+            MiFreeRmapEntry(current_entry);
             return;
         }
         previous_entry = current_entry;

@@ -15,6 +15,13 @@
 #define MODULE_INVOLVED_IN_ARM3
 #include <mm/ARM3/miarm.h>
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+/* A block cached in an i386 pool S-list is free, not an allocation. Keeping
+ * that state in the pool header prevents a duplicate push from aliasing two
+ * callers after the duplicate address is popped. */
+#define POOL_LOOKASIDE_FREE 0x7F
+#endif
+
 #undef ExAllocatePoolWithQuota
 #undef ExAllocatePoolWithQuotaTag
 
@@ -2116,6 +2123,16 @@ ExAllocatePoolWithTag(IN POOL_TYPE PoolType,
             // Get the real entry, write down its pool type, and track it
             //
             Entry--;
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+            if (Entry->PoolType != POOL_LOOKASIDE_FREE)
+            {
+                KeBugCheckEx(BAD_POOL_HEADER,
+                             POOL_ENTRY_CORRUPTED,
+                             (ULONG_PTR)Entry,
+                             Entry->Ulong1,
+                             POOL_LOOKASIDE_FREE);
+            }
+#endif
             Entry->PoolType = OriginalType + 1;
             ExpInsertPoolTracker(Tag,
                                  Entry->BlockSize * POOL_BLOCK_SIZE,
@@ -2496,6 +2513,11 @@ ExFreePoolWithTag(IN PVOID P,
 {
     PPOOL_HEADER Entry, NextEntry;
     USHORT BlockSize;
+    ULONG EntryPoolType;
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    POOL_HEADER CapturedHeader;
+    ULONG OldHeader, NewHeader, ObservedHeader;
+#endif
     KIRQL OldIrql;
     POOL_TYPE PoolType;
     PPOOL_DESCRIPTOR PoolDesc;
@@ -2665,12 +2687,43 @@ ExFreePoolWithTag(IN PVOID P,
     Entry--;
     ASSERT((ULONG_PTR)Entry % POOL_BLOCK_SIZE == 0);
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    /* Claim this allocation before accounting for or publishing its free. */
+    OldHeader = Entry->Ulong1;
+    for (;;)
+    {
+        CapturedHeader.Ulong1 = OldHeader;
+        EntryPoolType = CapturedHeader.PoolType;
+        if ((EntryPoolType == 0) ||
+            (EntryPoolType == POOL_LOOKASIDE_FREE))
+        {
+            KeBugCheckEx(BAD_POOL_CALLER,
+                         POOL_ENTRY_ALREADY_FREE,
+                         (ULONG_PTR)P,
+                         Entry->PoolTag,
+                         EntryPoolType);
+        }
+
+        CapturedHeader.PoolType = POOL_LOOKASIDE_FREE;
+        NewHeader = CapturedHeader.Ulong1;
+        ObservedHeader = (ULONG)InterlockedCompareExchange((PLONG)&Entry->Ulong1,
+                                                          (LONG)NewHeader,
+                                                          (LONG)OldHeader);
+        if (ObservedHeader == OldHeader)
+            break;
+
+        OldHeader = ObservedHeader;
+    }
+#else
+    EntryPoolType = Entry->PoolType;
+#endif
+
     //
     // Get the size of the entry, and it's pool type, then load the descriptor
     // for this pool type
     //
     BlockSize = Entry->BlockSize;
-    PoolType = (Entry->PoolType - 1) & BASE_POOL_TYPE_MASK;
+    PoolType = (EntryPoolType - 1) & BASE_POOL_TYPE_MASK;
     PoolDesc = PoolVector[PoolType];
 
     //
@@ -2700,12 +2753,12 @@ ExFreePoolWithTag(IN PVOID P,
     //
     ExpRemovePoolTracker(Tag,
                          BlockSize * POOL_BLOCK_SIZE,
-                         Entry->PoolType - 1);
+                         EntryPoolType - 1);
 
     //
     // Release pool quota, if any
     //
-    if ((Entry->PoolType - 1) & QUOTA_POOL_MASK)
+    if ((EntryPoolType - 1) & QUOTA_POOL_MASK)
     {
         Process = ((PVOID *)POOL_NEXT_BLOCK(Entry))[-1];
         if (Process)
@@ -2713,7 +2766,7 @@ ExFreePoolWithTag(IN PVOID P,
             if (Process->Pcb.Header.Type != ProcessObject)
             {
                 DPRINT1("Object %p is not a process. Type %u, pool type 0x%x, block size %u\n",
-                        Process, Process->Pcb.Header.Type, Entry->PoolType, BlockSize);
+                        Process, Process->Pcb.Header.Type, EntryPoolType, BlockSize);
                 KeBugCheckEx(BAD_POOL_CALLER,
                              POOL_BILLED_PROCESS_INVALID,
                              (ULONG_PTR)P,

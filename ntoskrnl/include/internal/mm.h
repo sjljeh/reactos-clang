@@ -280,6 +280,9 @@ typedef struct _MM_RMAP_ENTRY
 #if DBG
    PVOID Caller;
 #endif
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+   volatile LONG InUse;
+#endif
 }
 MM_RMAP_ENTRY, *PMM_RMAP_ENTRY;
 
