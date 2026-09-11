@@ -83,6 +83,7 @@ typedef struct _DPC_QUEUE_ENTRY
 typedef struct DECLSPEC_CACHEALIGN _KI_SCHEDULER_CPU_DATA
 {
     volatile LONG ReadyThreadCount;
+    volatile LONG TransferableReadyThreadCount;
     volatile ULONG FindAny;
     volatile ULONG FindLast;
     volatile ULONG FindIdeal;

@@ -1364,6 +1364,20 @@ KxUnwaitThreadForEvent(IN PKEVENT Event,
 // The caller must hold the PRCB lock on an SMP system.
 //
 FORCEINLINE
+BOOLEAN
+KiIsThreadTransferable(
+    _In_ PKTHREAD Thread)
+{
+#ifdef CONFIG_SMP
+    KAFFINITY ProcessorSet = Thread->Affinity & KeActiveProcessors;
+    return (ProcessorSet & (ProcessorSet - 1)) != 0;
+#else
+    UNREFERENCED_PARAMETER(Thread);
+    return FALSE;
+#endif
+}
+
+FORCEINLINE
 VOID
 KiInsertReadyQueue(
     _In_ PKPRCB Prcb,
@@ -1387,6 +1401,8 @@ KiInsertReadyQueue(
 
     Prcb->ReadySummary |= PRIORITY_MASK(Priority);
     KiSchedulerCpuData[Prcb->Number].ReadyThreadCount++;
+    if (KiIsThreadTransferable(Thread))
+        KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount++;
 }
 
 FORCEINLINE
@@ -1403,6 +1419,11 @@ KiRemoveReadyQueue(
     Priority = Thread->Priority;
     ASSERT((Prcb->ReadySummary & PRIORITY_MASK(Priority)) != 0);
     ASSERT(KiSchedulerCpuData[Prcb->Number].ReadyThreadCount > 0);
+    if (KiIsThreadTransferable(Thread))
+    {
+        ASSERT(KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount > 0);
+        KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount--;
+    }
 
     if (RemoveEntryList(&Thread->WaitListEntry))
         Prcb->ReadySummary &= ~PRIORITY_MASK(Priority);

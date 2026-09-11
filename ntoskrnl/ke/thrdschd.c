@@ -109,7 +109,8 @@ KiStealReadyThread(
             NT_VERIFY(BitScanForwardAffinity(&Processor, ScanSet) != FALSE);
             ScanSet &= ~AFFINITY_MASK(Processor);
 
-            ReadyCount = KiSchedulerCpuData[Processor].ReadyThreadCount;
+            ReadyCount =
+                KiSchedulerCpuData[Processor].TransferableReadyThreadCount;
             if (ReadyCount > HighestReadyCount)
             {
                 HighestReadyCount = ReadyCount;
@@ -430,7 +431,8 @@ KiBalanceReadyQueues(VOID)
             if (Processor >= KeNumberProcessors) Processor -= KeNumberProcessors;
             if (!(SourceSet & AFFINITY_MASK(Processor))) continue;
 
-            ReadyCount = KiSchedulerCpuData[Processor].ReadyThreadCount;
+            ReadyCount =
+                KiSchedulerCpuData[Processor].TransferableReadyThreadCount;
             if (ReadyCount <= 0) continue;
 
             Prcb = KiProcessorBlock[Processor];
@@ -1312,6 +1314,7 @@ KiUpdateEffectiveAffinityThread(
     _In_ PKTHREAD Thread)
 {
     PKPRCB Prcb;
+    BOOLEAN WasTransferable, IsTransferable;
 
     /* Acquire the thread lock */
     KiAcquireThreadLock(Thread);
@@ -1320,9 +1323,23 @@ KiUpdateEffectiveAffinityThread(
     Prcb = KiProcessorBlock[Thread->NextProcessor];
     KiAcquirePrcbLock(Prcb);
 
-    /* Set the thread's affinity and ideal processor */
+    /* Set the thread's affinity and keep ready-queue accounting coherent. */
+    WasTransferable = KiIsThreadTransferable(Thread);
     Thread->Affinity = Thread->UserAffinity;
     Thread->IdealProcessor = Thread->UserIdealProcessor;
+    IsTransferable = KiIsThreadTransferable(Thread);
+    if ((Thread->State == Ready) && (WasTransferable != IsTransferable))
+    {
+        if (IsTransferable)
+        {
+            KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount++;
+        }
+        else
+        {
+            ASSERT(KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount > 0);
+            KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount--;
+        }
+    }
 
     /* Check if the affinity doesn't match with the current processor */
     if ((Prcb->SetMember & Thread->Affinity) == 0)
