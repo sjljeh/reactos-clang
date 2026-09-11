@@ -252,6 +252,12 @@ VOID FASTCALL UserEnterExclusive(VOID)
     gptiCurrent = PsGetCurrentThreadWin32Thread();
 }
 
+VOID FASTCALL UserConvertExclusiveToShared(VOID)
+{
+    ASSERT(UserIsEnteredExclusive());
+    ExConvertExclusiveToSharedLite(&UserLock);
+}
+
 VOID FASTCALL UserLeave(VOID)
 {
     ASSERT_NOGDILOCKS();

@@ -6240,6 +6240,26 @@ Exit:
    return Ret;
 }
 
+static BOOL
+MenuBarDrawNeedsExclusive(PMENU Menu)
+{
+   UINT i;
+
+   if (Menu->cItems && !Menu->rgItems)
+      return TRUE;
+
+   for (i = 0; i < Menu->cItems; i++)
+   {
+      if ((Menu->rgItems[i].fType & MFT_OWNERDRAW) ||
+          (Menu->rgItems[i].hbmp == HBMMENU_CALLBACK))
+      {
+         return TRUE;
+      }
+   }
+
+   return FALSE;
+}
+
 /*
  * @implemented
  */
@@ -6254,6 +6274,7 @@ NtUserDrawMenuBarTemp(
 {
    PMENU Menu;
    PWND Window;
+   HFONT FontOld;
    RECT Rect;
    NTSTATUS Status = STATUS_SUCCESS;
    DWORD Ret = 0;
@@ -6289,6 +6310,21 @@ NtUserDrawMenuBarTemp(
       SetLastNtError(Status);
       goto Exit; // Return 0
    }
+
+   /* Calculate item rectangles while menu state is still exclusive. The
+    * normal draw that follows only samples those rectangles and item data. */
+   if (Menu->cyMenu == 0)
+   {
+      FontOld = NtGdiSelectFont(hDC, hFont ? hFont : ghMenuFont);
+      MENU_MenuBarCalcSize(hDC, &Rect, Menu, Window);
+      if (FontOld)
+         NtGdiSelectFont(hDC, FontOld);
+   }
+
+   /* Owner-draw and callback bitmap items can reenter USER. Keep the
+    * traditional exclusive path for them; ordinary menu bars draw shared. */
+   if (!MenuBarDrawNeedsExclusive(Menu))
+      UserConvertExclusiveToShared();
 
    Ret = IntDrawMenuBarTemp(Window, hDC, &Rect, Menu, hFont);
 

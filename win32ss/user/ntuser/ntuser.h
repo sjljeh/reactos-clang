@@ -29,6 +29,7 @@ CODE_SEG("INIT") NTSTATUS NTAPI InitUserImpl(VOID);
 VOID FASTCALL CleanupUserImpl(VOID);
 VOID FASTCALL UserEnterShared(VOID);
 VOID FASTCALL UserEnterExclusive(VOID);
+VOID FASTCALL UserConvertExclusiveToShared(VOID);
 VOID FASTCALL UserLeave(VOID);
 BOOL FASTCALL UserIsEntered(VOID);
 BOOL FASTCALL UserIsEnteredExclusive(VOID);
