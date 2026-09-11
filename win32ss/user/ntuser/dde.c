@@ -85,14 +85,30 @@ IntDDEPostCallback(
 
    UserEnterCo();
 
-   if (!NT_SUCCESS(Status) || ResultPointer == NULL )
+   if (!NT_SUCCESS(Status) ||
+       !ResultPointer ||
+       ResultLength != ArgumentLength)
    {
       ERR("DDE Post callback failed!\n");
       IntCbFreeMemory(Argument);
       return 0;
    }
 
-   RtlCopyMemory(Common, ResultPointer, ArgumentLength);
+   _SEH2_TRY
+   {
+      ProbeForRead(ResultPointer, ArgumentLength, 1);
+      RtlCopyMemory(Common, ResultPointer, ArgumentLength);
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
+   if (!NT_SUCCESS(Status))
+   {
+      IntCbFreeMemory(Argument);
+      return 0;
+   }
 
    size    = Common->size;
    *lParam = Common->lParam;
@@ -148,14 +164,30 @@ IntDDEGetCallback(
 
    UserEnterCo();
 
-   if (!NT_SUCCESS(Status) || ResultPointer == NULL )
+   if (!NT_SUCCESS(Status) ||
+       !ResultPointer ||
+       ResultLength != ArgumentLength)
    {
       ERR("DDE Get callback failed!\n");
       IntCbFreeMemory(Argument);
       return FALSE;
    }
 
-   RtlMoveMemory(Common, ResultPointer, ArgumentLength);
+   _SEH2_TRY
+   {
+      ProbeForRead(ResultPointer, ArgumentLength, 1);
+      RtlMoveMemory(Common, ResultPointer, ArgumentLength);
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
+   if (!NT_SUCCESS(Status))
+   {
+      IntCbFreeMemory(Argument);
+      return FALSE;
+   }
 
    pMsg->lParam = Common->lParam;
 
@@ -473,4 +505,3 @@ NtUserDdeInitialize(
 
    return 0;
 }
-

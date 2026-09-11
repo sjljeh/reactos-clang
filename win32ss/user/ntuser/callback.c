@@ -214,7 +214,9 @@ co_IntClientLoadLibrary(PUNICODE_STRING pstrLibName,
    /* Free the argument */
    IntCbFreeMemory(pArguments);
 
-   if(!NT_SUCCESS(Status))
+   if (!NT_SUCCESS(Status) ||
+       !ResultPointer ||
+       ResultLength != sizeof(bResult))
    {
        return FALSE;
    }
@@ -350,6 +352,19 @@ co_IntCallWindowProc(WNDPROC Proc,
       return 0;
    }
 
+   if (!ResultPointer || ResultLength != ArgumentLength)
+   {
+      ERR("Invalid callback result, Message %u ResultPointer %p ResultLength %lu Expected %lu\n",
+          Message, ResultPointer, ResultLength, ArgumentLength);
+      UserEnterCo();
+      IntRestoreTebWndCallback(Wnd, pWnd, pActCtx);
+      if (lParamBufferSize != -1)
+      {
+         IntCbFreeMemory(Arguments);
+      }
+      return -1;
+   }
+
    _SEH2_TRY
    {
       /* Simulate old behaviour: copy into our local buffer */
@@ -450,7 +465,9 @@ co_IntLoadSysMenuTemplate(VOID)
                                0,
                                &ResultPointer,
                                &ResultLength);
-   if (NT_SUCCESS(Status))
+   if (NT_SUCCESS(Status) &&
+       ResultPointer &&
+       ResultLength == sizeof(LRESULT))
    {
       /* Simulate old behaviour: copy into our local buffer */
       _SEH2_TRY
@@ -496,15 +513,26 @@ co_IntLoadDefaultCursors(VOID)
 
    UserEnterCo();
 
-   if (!NT_SUCCESS(Status))
+   if (!NT_SUCCESS(Status) ||
+       !ResultPointer ||
+       ResultLength != sizeof(HCURSOR))
    {
       return FALSE;
    }
 
    /* HACK: The desktop class doen't have a proper cursor yet, so set it here */
-    gDesktopCursor = *((HCURSOR*)ResultPointer);
+   _SEH2_TRY
+   {
+      ProbeForRead(ResultPointer, sizeof(HCURSOR), 1);
+      gDesktopCursor = *(HCURSOR*)ResultPointer;
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
 
-   return TRUE;
+   return NT_SUCCESS(Status);
 }
 
 static INT iTheId = -2; // Set it out of range.
@@ -768,7 +796,7 @@ co_IntCallHookProc(INT HookId,
       goto Fault_Exit;
    }
 
-   if (ResultPointer)
+   if (ResultPointer && ResultLength == ArgumentLength)
    {
       _SEH2_TRY
       {
@@ -785,7 +813,9 @@ co_IntCallHookProc(INT HookId,
    }
    else
    {
-      ERR("ERROR: Hook %d Code %d ResultPointer 0x%p ResultLength %u\n",HookId,Code,ResultPointer,ResultLength);
+       ERR("ERROR: Hook %d Code %d ResultPointer 0x%p ResultLength %u Expected %u\n",
+           HookId, Code, ResultPointer, ResultLength, ArgumentLength);
+       Hit = TRUE;
    }
 
    /* Support write backs... SEH is in UserCallNextHookEx. */
@@ -945,9 +975,20 @@ co_IntCallLoadMenu( HINSTANCE hModule,
 
    UserEnterCo();
 
-   if (NT_SUCCESS(Status))
+   if (NT_SUCCESS(Status) &&
+       ResultPointer &&
+       ResultLength == sizeof(LRESULT))
    {
-      Result = *(LRESULT*)ResultPointer;
+      _SEH2_TRY
+      {
+         ProbeForRead(ResultPointer, sizeof(LRESULT), 1);
+         Result = *(LRESULT*)ResultPointer;
+      }
+      _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+      {
+         Result = 0;
+      }
+      _SEH2_END;
    }
    else
    {
@@ -1025,9 +1066,20 @@ co_IntCopyImage(HANDLE hnd, UINT type, INT desiredx, INT desiredy, UINT flags)
 
    UserEnterCo();
 
-   if (NT_SUCCESS(Status))
+   if (NT_SUCCESS(Status) &&
+       ResultPointer &&
+       ResultLength == sizeof(HANDLE))
    {
-      Handle = *(HANDLE*)ResultPointer;
+      _SEH2_TRY
+      {
+         ProbeForRead(ResultPointer, sizeof(HANDLE), 1);
+         Handle = *(HANDLE*)ResultPointer;
+      }
+      _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+      {
+         Handle = NULL;
+      }
+      _SEH2_END;
    }
    else
    {
@@ -1074,30 +1126,37 @@ co_IntGetCharsetInfo(LCID Locale, PCHARSETINFO pCs)
 
    if (NT_SUCCESS(Status))
    {
-      _SEH2_TRY
+      if (!ResultPointer || ResultLength != ArgumentLength)
       {
-         /* Need to copy into our local buffer */
-         RtlMoveMemory(Argument, ResultPointer, ArgumentLength);
+         Status = STATUS_INFO_LENGTH_MISMATCH;
       }
-      _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+      else
       {
-         ERR("Failed to copy result from user mode!\n");
-         Status = _SEH2_GetExceptionCode();
+         _SEH2_TRY
+         {
+            /* Need to copy into our local buffer */
+            RtlMoveMemory(Argument, ResultPointer, ArgumentLength);
+         }
+         _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+         {
+            ERR("Failed to copy result from user mode!\n");
+            Status = _SEH2_GetExceptionCode();
+         }
+         _SEH2_END;
       }
-      _SEH2_END;
    }
 
    UserEnterCo();
 
-   RtlCopyMemory(pCs, &Common->Cs, sizeof(CHARSETINFO));
-
-   IntCbFreeMemory(Argument);
-
    if (!NT_SUCCESS(Status))
    {
       ERR("GetCharsetInfo Failed!!\n");
+      IntCbFreeMemory(Argument);
       return FALSE;
    }
+
+   RtlCopyMemory(pCs, &Common->Cs, sizeof(CHARSETINFO));
+   IntCbFreeMemory(Argument);
 
    return TRUE;
 }
@@ -1132,14 +1191,30 @@ co_IntSetWndIcons(VOID)
 
    UserEnterCo();
 
-   if (!NT_SUCCESS(Status))
+   if (!NT_SUCCESS(Status) ||
+       !ResultPointer ||
+       ResultLength != ArgumentLength)
    {
       ERR("Set Window Icons callback failed!\n");
       IntCbFreeMemory(Argument);
       return FALSE;
    }
 
-   RtlMoveMemory(Common, ResultPointer, ArgumentLength);
+   _SEH2_TRY
+   {
+      ProbeForRead(ResultPointer, ArgumentLength, 1);
+      RtlMoveMemory(Common, ResultPointer, ArgumentLength);
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
+   if (!NT_SUCCESS(Status))
+   {
+      IntCbFreeMemory(Argument);
+      return FALSE;
+   }
    gpsi->hIconSmWindows = Common->hIconSmWindows;
    gpsi->hIconWindows   = Common->hIconWindows;
 
@@ -1211,14 +1286,30 @@ co_IntSetupOBM(VOID)
 
    UserEnterCo();
 
-   if (!NT_SUCCESS(Status))
+   if (!NT_SUCCESS(Status) ||
+       !ResultPointer ||
+       ResultLength != ArgumentLength)
    {
       ERR("Set Window Icons callback failed!\n");
       IntCbFreeMemory(Argument);
       return;
    }
 
-   RtlMoveMemory(Common, ResultPointer, ArgumentLength);
+   _SEH2_TRY
+   {
+      ProbeForRead(ResultPointer, ArgumentLength, 1);
+      RtlMoveMemory(Common, ResultPointer, ArgumentLength);
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      Status = _SEH2_GetExceptionCode();
+   }
+   _SEH2_END;
+   if (!NT_SUCCESS(Status))
+   {
+      IntCbFreeMemory(Argument);
+      return;
+   }
    RtlCopyMemory(gpsi->oembmi, Common->oembmi, sizeof(gpsi->oembmi));
 
    IntCbFreeMemory(Argument);
@@ -1270,8 +1361,21 @@ co_IntImmProcessKey(HWND hWnd, HKL hKL, UINT vKey, LPARAM lParam, DWORD dwHotKey
                                 &ResultLength);
     UserEnterCo();
 
-    if (NT_SUCCESS(Status))
-        ret = *(LPDWORD)ResultPointer;
+    if (NT_SUCCESS(Status) &&
+        ResultPointer &&
+        ResultLength == sizeof(DWORD))
+    {
+        _SEH2_TRY
+        {
+            ProbeForRead(ResultPointer, sizeof(DWORD), 1);
+            ret = *(LPDWORD)ResultPointer;
+        }
+        _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+        {
+            ret = 0;
+        }
+        _SEH2_END;
+    }
 
     return ret;
 }

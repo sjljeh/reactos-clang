@@ -1031,17 +1031,24 @@ BOOL UserExtTextOutW(HDC hdc,
 
     if (NT_SUCCESS(Status))
     {
-        _SEH2_TRY
+        if (!ResultPointer || ResultLength != sizeof(BOOL))
         {
-            ProbeForRead(ResultPointer, sizeof(BOOL), 1);
-            bResult = *(LPBOOL)ResultPointer;
+            Status = STATUS_INFO_LENGTH_MISMATCH;
         }
-        _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+        else
         {
-            ERR("Failed to copy result from user mode!\n");
-            Status = _SEH2_GetExceptionCode();
+            _SEH2_TRY
+            {
+                ProbeForRead(ResultPointer, sizeof(BOOL), 1);
+                bResult = *(LPBOOL)ResultPointer;
+            }
+            _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+            {
+                ERR("Failed to copy result from user mode!\n");
+                Status = _SEH2_GetExceptionCode();
+            }
+            _SEH2_END;
         }
-        _SEH2_END;
     }
 
     if (!NT_SUCCESS(Status))
@@ -1403,4 +1410,3 @@ INT WINAPI DrawTextExWorker( HDC hdc,
     }
     return y - rect->top;
 }
-
