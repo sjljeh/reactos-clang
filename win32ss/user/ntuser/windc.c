@@ -1172,7 +1172,7 @@ NtUserGetDCEx(HWND hWnd OPTIONAL, HANDLE ClipRegion, ULONG Flags)
 
   TRACE("Enter NtUserGetDCEx: hWnd %p, ClipRegion %p, Flags %x.\n",
       hWnd, ClipRegion, Flags);
-  UserEnterExclusive();
+  UserEnterShared();
 
   if (hWnd && !(Wnd = UserGetWindowObject(hWnd)))
   {
@@ -1229,12 +1229,7 @@ NtUserSelectPalette(HDC  hDC,
               HPALETTE  hpal,
        BOOL  ForceBackground)
 {
-    HPALETTE oldPal;
-    UserEnterExclusive();
-    // Implement window checks
-    oldPal = GdiSelectPalette( hDC, hpal, ForceBackground);
-    UserLeave();
-    return oldPal;
+    return GdiSelectPalette(hDC, hpal, ForceBackground);
 }
 
 /* EOF */
