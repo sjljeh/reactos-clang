@@ -1361,12 +1361,12 @@ static LRESULT DEFDLG_Proc( HWND hwnd, UINT msg, WPARAM wParam,
 /***********************************************************************
  *           DEFDLG_Epilog
  */
-static LRESULT DEFDLG_Epilog(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, BOOL fResult, BOOL fAnsi)
+static LRESULT DEFDLG_Epilog(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT lResult, BOOL fAnsi)
 {
     if ((msg >= WM_CTLCOLORMSGBOX && msg <= WM_CTLCOLORSTATIC) ||
          msg == WM_CTLCOLOR)
        {
-          if (fResult) return fResult;
+          if (lResult) return lResult;
 
           return fAnsi ? DefWindowProcA(hwnd, msg, wParam, lParam):
                          DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1374,7 +1374,7 @@ static LRESULT DEFDLG_Epilog(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, 
     if ( msg == WM_COMPAREITEM ||
          msg == WM_VKEYTOITEM || msg == WM_CHARTOITEM ||
          msg == WM_QUERYDRAGICON || msg == WM_INITDIALOG)
-        return fResult;
+        return lResult;
 
     return GetWindowLongPtrW( hwnd, DWLP_MSGRESULT );
 }
@@ -1736,7 +1736,7 @@ DefDlgProcA(
 {
     DIALOGINFO *dlgInfo;
     WNDPROC dlgproc;
-    BOOL result = FALSE;
+    LRESULT result = 0;
 
     /* Perform DIALOGINFO initialization if not done */
     if(!(dlgInfo = DIALOG_get_info( hDlg, TRUE ))) return 0; //// REACTOS : Always TRUE! See RealGetWindowClass.
@@ -1799,7 +1799,7 @@ DefDlgProcW(
 {
     DIALOGINFO *dlgInfo;
     WNDPROC dlgproc;
-    BOOL result = FALSE;
+    LRESULT result = 0;
 
     /* Perform DIALOGINFO initialization if not done */
     if(!(dlgInfo = DIALOG_get_info( hDlg, TRUE ))) return 0; //// REACTOS : Always TRUE! See RealGetWindowClass.
