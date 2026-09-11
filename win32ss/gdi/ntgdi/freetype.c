@@ -222,11 +222,38 @@ static BOOL             g_RenderingEnabled = TRUE;
 #define ASSERT_FREETYPE_LOCK_NOT_HELD() \
     ASSERT(g_FreeTypeLock->Owner != KeGetCurrentThread())
 
-#define IntLockFreeType() \
-do { \
-    ASSERT_FREETYPE_LOCK_NOT_HELD(); \
-    ExEnterCriticalRegionAndAcquireFastMutexUnsafe(g_FreeTypeLock); \
-} while (0)
+#define FREETYPE_LOCK_SPIN_COUNT 4000
+
+static __inline VOID
+IntLockFreeTypeImpl(VOID)
+{
+    PKTHREAD Thread = KeGetCurrentThread();
+    ULONG SpinCount;
+
+    ASSERT_FREETYPE_LOCK_NOT_HELD();
+    KeEnterCriticalRegion();
+
+    /* Most font-engine operations are short. Avoid turning simultaneous GUI
+     * calls into a fast-mutex handoff convoy on MP systems. Once a waiter has
+     * queued, Count cannot be one, so this does not bypass queued owners. */
+    if (KeNumberProcessors > 1)
+    {
+        for (SpinCount = 0; SpinCount < FREETYPE_LOCK_SPIN_COUNT; SpinCount++)
+        {
+            if (InterlockedCompareExchange(&g_FreeTypeLock->Count, 0, 1) == 1)
+            {
+                g_FreeTypeLock->Owner = Thread;
+                return;
+            }
+
+            YieldProcessor();
+        }
+    }
+
+    ExAcquireFastMutexUnsafe(g_FreeTypeLock);
+}
+
+#define IntLockFreeType() IntLockFreeTypeImpl()
 
 #define IntUnLockFreeType() \
 do { \
