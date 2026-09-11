@@ -107,6 +107,11 @@ KiScanReadyQueues(IN PKDPC Dpc,
     KiReleasePrcbLock(Prcb);
     KiReleaseDispatcherLock(OldIrql);
 
+#ifdef CONFIG_SMP
+    /* Move at most one thread between persistently imbalanced processors. */
+    KiBalanceReadyQueues();
+#endif
+
     /* Update the queue index for next time */
     if ((Count) && (Number))
     {

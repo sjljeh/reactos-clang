@@ -39,7 +39,8 @@ static
 PKTHREAD
 KiFindStealableThread(
     _In_ PKPRCB SourcePrcb,
-    _In_ ULONG TargetProcessor)
+    _In_ ULONG TargetProcessor,
+    _In_ KPRIORITY MaximumPriority)
 {
     ULONG Summary, Priority, ScanCount;
     PLIST_ENTRY ListHead, ListEntry;
@@ -63,7 +64,8 @@ KiFindStealableThread(
             ASSERT(Thread->State == Ready);
             ASSERT(Thread->NextProcessor == SourcePrcb->Number);
 
-            if (Thread->Affinity & AFFINITY_MASK(TargetProcessor))
+            if ((Thread->Priority <= MaximumPriority) &&
+                (Thread->Affinity & AFFINITY_MASK(TargetProcessor)))
             {
                 KiRemoveReadyQueue(SourcePrcb, Thread);
                 return Thread;
@@ -138,7 +140,9 @@ KiStealReadyThread(
             continue;
         }
 
-        Thread = KiFindStealableThread(SourcePrcb, TargetPrcb->Number);
+        Thread = KiFindStealableThread(SourcePrcb,
+                                       TargetPrcb->Number,
+                                       HIGH_PRIORITY);
         if (Thread)
         {
             Thread->NextProcessor = TargetPrcb->Number;
@@ -299,6 +303,182 @@ KiQueryProcessorLoad(
     if (NextThread && (NextThread != Prcb->IdleThread)) Load++;
 
     return Load;
+}
+
+static
+BOOLEAN
+KiTryBalanceReadyQueuePair(
+    _In_ PKPRCB SourcePrcb,
+    _In_ PKPRCB TargetPrcb)
+{
+    PKPRCB FirstPrcb, SecondPrcb;
+    PKTHREAD Thread, CurrentThread, NextThread;
+    KPRIORITY MaximumPriority;
+    ULONG SourceLoad, TargetLoad;
+    BOOLEAN RequestInterrupt, Moved;
+
+    ASSERT(SourcePrcb != TargetPrcb);
+    ASSERT(KeGetCurrentIrql() >= DISPATCH_LEVEL);
+
+    /* Use a stable order even though both acquisitions are nonblocking. */
+    if (SourcePrcb->Number < TargetPrcb->Number)
+    {
+        FirstPrcb = SourcePrcb;
+        SecondPrcb = TargetPrcb;
+    }
+    else
+    {
+        FirstPrcb = TargetPrcb;
+        SecondPrcb = SourcePrcb;
+    }
+
+    if (!KiTryAcquirePrcbLock(FirstPrcb)) return FALSE;
+    if (!KiTryAcquirePrcbLock(SecondPrcb))
+    {
+        KiReleasePrcbLock(FirstPrcb);
+        return FALSE;
+    }
+
+    Moved = FALSE;
+    RequestInterrupt = FALSE;
+    SourceLoad = KiQueryProcessorLoad(SourcePrcb);
+    TargetLoad = KiQueryProcessorLoad(TargetPrcb);
+    if (SourceLoad <= TargetLoad) goto Exit;
+
+    /*
+     * Do not displace an already selected thread.  A candidate no stronger
+     * than that thread can still be queued without delaying a preemption that
+     * has already been requested.
+     */
+    NextThread = TargetPrcb->NextThread;
+    MaximumPriority = NextThread ? NextThread->Priority : HIGH_PRIORITY;
+    Thread = KiFindStealableThread(SourcePrcb,
+                                   TargetPrcb->Number,
+                                   MaximumPriority);
+    if (!Thread) goto Exit;
+
+    Thread->NextProcessor = TargetPrcb->Number;
+    CurrentThread = TargetPrcb->CurrentThread;
+    ASSERT(CurrentThread != NULL);
+
+    if (!NextThread && (Thread->Priority > CurrentThread->Priority))
+    {
+        /* The migrated thread must preempt the target's current thread. */
+        if (CurrentThread->State == Running) CurrentThread->Preempted = TRUE;
+        Thread->State = Standby;
+        TargetPrcb->NextThread = Thread;
+        TargetPrcb->IdleSchedule = FALSE;
+        InterlockedAndSetMember(&KiIdleSummary, ~TargetPrcb->SetMember);
+        RequestInterrupt = TRUE;
+        if (TargetPrcb->Number == KeGetCurrentProcessorNumber())
+            KiSchedulerCpuData[KeGetCurrentProcessorNumber()].PreemptCurrent++;
+        else
+            KiSchedulerCpuData[KeGetCurrentProcessorNumber()].PreemptAny++;
+    }
+    else
+    {
+        /* No immediate preemption is required; retain normal FIFO ordering. */
+        Thread->State = Ready;
+        KiInsertReadyQueue(TargetPrcb, Thread, FALSE);
+    }
+
+    KiSchedulerCpuData[KeGetCurrentProcessorNumber()].FindAny++;
+    Moved = TRUE;
+
+Exit:
+    KiReleasePrcbLock(SecondPrcb);
+    KiReleasePrcbLock(FirstPrcb);
+
+    if (RequestInterrupt &&
+        (TargetPrcb->Number != KeGetCurrentProcessorNumber()))
+    {
+        KiIpiSend(AFFINITY_MASK(TargetPrcb->Number), IPI_DPC);
+    }
+
+    return Moved;
+}
+
+VOID
+NTAPI
+KiBalanceReadyQueues(VOID)
+{
+    static ULONG BalanceSeed;
+    KAFFINITY SourceSet, TargetSet;
+    PKPRCB SourcePrcb, TargetPrcb, Prcb;
+    LONG ReadyCount;
+    ULONG Start, Offset, Processor;
+    ULONG SourceProcessor, TargetProcessor;
+    ULONG Load, HighestLoad, LowestLoad;
+
+    ASSERT(KeGetCurrentIrql() >= DISPATCH_LEVEL);
+    if (KeNumberProcessors < 2) return;
+
+    Start = BalanceSeed + 1;
+    if (Start >= KeNumberProcessors) Start = 0;
+    BalanceSeed = Start;
+
+    SourceSet = KeActiveProcessors;
+    while (SourceSet)
+    {
+        SourceProcessor = MAXULONG;
+        HighestLoad = 0;
+
+        /* Select the busiest CPU which has a queued thread to transfer. */
+        for (Offset = 0; Offset < KeNumberProcessors; Offset++)
+        {
+            Processor = Start + Offset;
+            if (Processor >= KeNumberProcessors) Processor -= KeNumberProcessors;
+            if (!(SourceSet & AFFINITY_MASK(Processor))) continue;
+
+            ReadyCount = KiSchedulerCpuData[Processor].ReadyThreadCount;
+            if (ReadyCount <= 0) continue;
+
+            Prcb = KiProcessorBlock[Processor];
+            Load = KiQueryProcessorLoad(Prcb);
+            if ((SourceProcessor == MAXULONG) || (Load > HighestLoad))
+            {
+                SourceProcessor = Processor;
+                HighestLoad = Load;
+            }
+        }
+
+        if (SourceProcessor == MAXULONG) return;
+        SourceSet &= ~AFFINITY_MASK(SourceProcessor);
+        SourcePrcb = KiProcessorBlock[SourceProcessor];
+
+        TargetSet = KeActiveProcessors & ~AFFINITY_MASK(SourceProcessor);
+        while (TargetSet)
+        {
+            TargetProcessor = MAXULONG;
+            LowestLoad = MAXULONG;
+
+            /* Select the least-loaded remaining destination. */
+            for (Offset = 0; Offset < KeNumberProcessors; Offset++)
+            {
+                Processor = Start + Offset;
+                if (Processor >= KeNumberProcessors) Processor -= KeNumberProcessors;
+                if (!(TargetSet & AFFINITY_MASK(Processor))) continue;
+
+                Prcb = KiProcessorBlock[Processor];
+                Load = KiQueryProcessorLoad(Prcb);
+                if (Load < LowestLoad)
+                {
+                    TargetProcessor = Processor;
+                    LowestLoad = Load;
+                }
+            }
+
+            if ((TargetProcessor == MAXULONG) ||
+                (HighestLoad <= LowestLoad))
+            {
+                break;
+            }
+
+            TargetSet &= ~AFFINITY_MASK(TargetProcessor);
+            TargetPrcb = KiProcessorBlock[TargetProcessor];
+            if (KiTryBalanceReadyQueuePair(SourcePrcb, TargetPrcb)) return;
+        }
+    }
 }
 
 ULONG

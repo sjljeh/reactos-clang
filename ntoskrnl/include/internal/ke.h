@@ -284,6 +284,14 @@ KiIdleSchedule(
     IN PKPRCB Prcb
 );
 
+#ifdef CONFIG_SMP
+VOID
+NTAPI
+KiBalanceReadyQueues(
+    VOID
+);
+#endif
+
 VOID
 FASTCALL
 KiProcessDeferredReadyList(
