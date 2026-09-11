@@ -1134,8 +1134,8 @@ static HWND DEFDLG_FindDefButton( HWND hwndDlg )
 static BOOL DEFDLG_SetDefId( HWND hwndDlg, DIALOGINFO *dlgInfo, WPARAM wParam)
 {
     DWORD dlgcode=0; /* initialize just to avoid a warning */
-    HWND hwndOld, hwndNew = GetDlgItem(hwndDlg, wParam);
-    INT old_id = dlgInfo->idResult;
+    HWND hwndOld, hwndNew = GetDlgItem(hwndDlg, (INT)wParam);
+    INT_PTR old_id = dlgInfo->idResult;
 
     dlgInfo->idResult = wParam;
     if (hwndNew &&
@@ -1144,7 +1144,7 @@ static BOOL DEFDLG_SetDefId( HWND hwndDlg, DIALOGINFO *dlgInfo, WPARAM wParam)
         return FALSE;  /* Destination is not a push button */
 
     /* Make sure the old default control is a valid push button ID */
-    hwndOld = GetDlgItem( hwndDlg, old_id );
+    hwndOld = GetDlgItem( hwndDlg, (INT)old_id );
     if (!hwndOld || !(SendMessageW( hwndOld, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON))
         hwndOld = DEFDLG_FindDefButton( hwndDlg );
     if (hwndOld && hwndOld != hwndNew)
@@ -1167,7 +1167,7 @@ static BOOL DEFDLG_SetDefId( HWND hwndDlg, DIALOGINFO *dlgInfo, WPARAM wParam)
 static BOOL DEFDLG_SetDefButton( HWND hwndDlg, DIALOGINFO *dlgInfo, HWND hwndNew )
 {
     DWORD dlgcode=0; /* initialize just to avoid a warning */
-    HWND hwndOld = GetDlgItem( hwndDlg, dlgInfo->idResult );
+    HWND hwndOld = GetDlgItem( hwndDlg, (INT)dlgInfo->idResult );
 
     if (hwndNew &&
         !((dlgcode=SendMessageW(hwndNew, WM_GETDLGCODE, 0, 0 ))
