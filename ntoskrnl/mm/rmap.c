@@ -23,6 +23,7 @@ static NPAGED_LOOKASIDE_LIST RmapLookasideList;
 #if defined(CONFIG_SMP) && defined(_M_IX86)
 #define RMAP_ENTRY_FREE   0
 #define RMAP_ENTRY_IN_USE 1
+static KSPIN_LOCK RmapLookasideLock;
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 static
@@ -75,9 +76,28 @@ MiAllocateRmapEntry(VOID)
     PMM_RMAP_ENTRY Entry;
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     LONG OldState;
+    KIRQL OldIrql;
 #endif
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    KeAcquireSpinLock(&RmapLookasideLock, &OldIrql);
+    RmapLookasideList.L.TotalAllocates++;
+    Entry = (PMM_RMAP_ENTRY)
+            InterlockedPopEntrySList(&RmapLookasideList.L.ListHead);
+    if (Entry == NULL)
+        RmapLookasideList.L.AllocateMisses++;
+    KeReleaseSpinLock(&RmapLookasideLock, OldIrql);
+
+    if (Entry == NULL)
+    {
+        Entry = RmapListAllocate(RmapLookasideList.L.Type,
+                                 RmapLookasideList.L.Size,
+                                 RmapLookasideList.L.Tag);
+    }
+#else
     Entry = ExAllocateFromNPagedLookasideList(&RmapLookasideList);
+#endif
+
 #if defined(CONFIG_SMP) && defined(_M_IX86)
     if (Entry != NULL)
     {
@@ -104,6 +124,8 @@ MiFreeRmapEntry(
     _In_ PMM_RMAP_ENTRY Entry)
 {
 #if defined(CONFIG_SMP) && defined(_M_IX86)
+    BOOLEAN FreeToPool;
+    KIRQL OldIrql;
     LONG OldState;
 
     OldState = InterlockedCompareExchange(&Entry->InUse,
@@ -117,8 +139,28 @@ MiFreeRmapEntry(
                      RMAP_ENTRY_IN_USE,
                      OldState);
     }
-#endif
+
+    KeAcquireSpinLock(&RmapLookasideLock, &OldIrql);
+    RmapLookasideList.L.TotalFrees++;
+    if (ExQueryDepthSList(&RmapLookasideList.L.ListHead) >=
+        RmapLookasideList.L.Depth)
+    {
+        RmapLookasideList.L.FreeMisses++;
+        FreeToPool = TRUE;
+    }
+    else
+    {
+        InterlockedPushEntrySList(&RmapLookasideList.L.ListHead,
+                                  (PSLIST_ENTRY)Entry);
+        FreeToPool = FALSE;
+    }
+    KeReleaseSpinLock(&RmapLookasideLock, OldIrql);
+
+    if (FreeToPool)
+        RmapListFree(Entry);
+#else
     ExFreeToNPagedLookasideList(&RmapLookasideList, Entry);
+#endif
 }
 
 CODE_SEG("INIT")
@@ -126,6 +168,9 @@ VOID
 NTAPI
 MmInitializeRmapList(VOID)
 {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    KeInitializeSpinLock(&RmapLookasideLock);
+#endif
     ExInitializeNPagedLookasideList (&RmapLookasideList,
 #if defined(CONFIG_SMP) && defined(_M_IX86)
                                      RmapListAllocate,
