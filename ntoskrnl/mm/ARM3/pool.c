@@ -26,8 +26,7 @@ MM_PAGED_POOL_INFO MmPagedPoolInfo;
 SIZE_T MmAllocatedNonPagedPool;
 SIZE_T MmTotalNonPagedPoolQuota;
 SIZE_T MmTotalPagedPoolQuota;
-/* TEMPORARY: Catch the first use-after-free of an NTGDI region buffer. */
-ULONG MmSpecialPoolTag = '4alG';
+ULONG MmSpecialPoolTag;
 ULONG MmConsumedPoolPercentage;
 BOOLEAN MmProtectFreedNonPagedPool;
 SLIST_HEADER MiNonPagedPoolSListHead;
