@@ -74,12 +74,10 @@ Author:
 //
 #define K0IPCR                  ((ULONG_PTR)(KIP0PCRADDRESS))
 #define PCR                     ((KPCR *)K0IPCR)
-#if defined(CONFIG_SMP) || defined(NT_BUILD)
-//#undef  KeGetPcr
+
+/* FS identifies the executing processor even in HAL object libraries that
+ * are shared between UP and MP target compositions. */
 #define KeGetPcr()              ((KPCR *)__readfsdword(FIELD_OFFSET(KPCR, SelfPcr)))
-#else
-#define KeGetPcr()              PCR
-#endif
 
 //
 // CPU Vendors
