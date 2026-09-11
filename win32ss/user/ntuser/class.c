@@ -2626,6 +2626,24 @@ IntNtUserSetClassLongPtr(HWND hWnd,
             goto Cleanup;
         }
 
+#ifdef _WIN64
+        if (Size == sizeof(LONG))
+        {
+            switch (Offset)
+            {
+                case GCLP_HBRBACKGROUND:
+                case GCLP_HCURSOR:
+                case GCLP_HICON:
+                case GCLP_HICONSM:
+                case GCLP_HMODULE:
+                case GCLP_MENUNAME:
+                case GCLP_WNDPROC:
+                    EngSetLastError(ERROR_INVALID_INDEX);
+                    goto Cleanup;
+            }
+        }
+#endif
+
         _SEH2_TRY
         {
             UNICODE_STRING Value;

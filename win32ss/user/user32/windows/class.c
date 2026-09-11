@@ -1519,6 +1519,21 @@ SetClassLongA(HWND hWnd,
     BOOL Allocated = FALSE;
     DWORD Ret;
 
+#ifdef _WIN64
+    switch (nIndex)
+    {
+        case GCLP_HBRBACKGROUND:
+        case GCLP_HCURSOR:
+        case GCLP_HICON:
+        case GCLP_HICONSM:
+        case GCLP_HMODULE:
+        case GCLP_MENUNAME:
+        case GCLP_WNDPROC:
+            SetLastError(ERROR_INVALID_INDEX);
+            return 0;
+    }
+#endif
+
     /* FIXME - portability!!!! */
 
     if (nIndex == GCL_MENUNAME && lpStr != NULL)
@@ -1587,6 +1602,21 @@ SetClassLongW(HWND hWnd,
     UNICODE_STRING Value = {0};
 
     TRACE("%p %d %lx\n", hWnd, nIndex, dwNewLong);
+
+#ifdef _WIN64
+    switch (nIndex)
+    {
+        case GCLP_HBRBACKGROUND:
+        case GCLP_HCURSOR:
+        case GCLP_HICON:
+        case GCLP_HICONSM:
+        case GCLP_HMODULE:
+        case GCLP_MENUNAME:
+        case GCLP_WNDPROC:
+            SetLastError(ERROR_INVALID_INDEX);
+            return 0;
+    }
+#endif
 
     /* FIXME - portability!!!! */
 
