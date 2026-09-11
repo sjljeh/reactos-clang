@@ -1874,15 +1874,20 @@ IntGetSetClassLongPtr(PCLS Class, ULONG Index, ULONG_PTR NewValue, ULONG Size)
     PVOID Address = (PUCHAR)(&Class[1]) + Index;
     ULONG_PTR OldValue;
 
+    if (Size == sizeof(WORD))
+    {
+        OldValue = ReadUnalignedU16(Address);
+        WriteUnalignedU16(Address, NewValue);
+    }
 #ifdef _WIN64
-    if (Size == sizeof(LONG))
+    else if (Size == sizeof(LONG))
     {
         /* Values might be unaligned */
         OldValue = ReadUnalignedU32(Address);
         WriteUnalignedU32(Address, NewValue);
     }
-    else
 #endif
+    else
     {
         /* Values might be unaligned */
         OldValue = ReadUnalignedUlongPtr(Address);
@@ -2752,10 +2757,14 @@ NtUserSetClassWord(
   INT nIndex,
   WORD wNewWord)
 {
-/*
- * NOTE: Obsoleted in 32-bit windows
- */
-   return(0);
+    if (nIndex < 0 && nIndex != GCW_ATOM)
+        return 0;
+
+    return (WORD)IntNtUserSetClassLongPtr(hWnd,
+                                          nIndex,
+                                          wNewWord,
+                                          FALSE,
+                                          sizeof(WORD));
 }
 
 BOOL

@@ -1686,14 +1686,8 @@ SetClassWord(
   HWND hWnd,
   int nIndex,
   WORD wNewWord)
-/*
- * NOTE: Obsoleted in 32-bit windows
- */
 {
-    if ((nIndex < 0) && (nIndex != GCW_ATOM))
-        return 0;
-
-    return (WORD) SetClassLongW ( hWnd, nIndex, wNewWord );
+    return NtUserSetClassWord(hWnd, nIndex, wNewWord);
 }
 
 /*
