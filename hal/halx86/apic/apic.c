@@ -531,6 +531,9 @@ HalpInitializePICs(IN BOOLEAN EnableInterrupts)
     HalpVectorToIndex[APIC_CLOCK_VECTOR] = 8;
     HalpVectorToIndex[CLOCK_IPI_VECTOR] = APIC_RESERVED_VECTOR;
     HalpVectorToIndex[APIC_SPURIOUS_VECTOR] = APIC_RESERVED_VECTOR;
+#ifndef _M_AMD64
+    HalpVectorToIndex[APIC_IPI_VECTOR] = APIC_RESERVED_VECTOR;
+#endif
 
     /* Set interrupt handlers in the IDT */
     KeRegisterInterruptHandler(APIC_CLOCK_VECTOR, HalpClockInterrupt);
@@ -538,11 +541,15 @@ HalpInitializePICs(IN BOOLEAN EnableInterrupts)
 #ifndef _M_AMD64
     KeRegisterInterruptHandler(APC_VECTOR, HalpApcInterrupt);
     KeRegisterInterruptHandler(DISPATCH_VECTOR, HalpDispatchInterrupt);
+    KeRegisterInterruptHandler(APIC_IPI_VECTOR, HalpIpiInterrupt);
 #endif
 
-    /* Register the vectors for APC and dispatch interrupts */
+    /* Register the vectors for software and interprocessor interrupts */
     HalpRegisterVector(IDT_INTERNAL, 0, APC_VECTOR, APC_LEVEL);
     HalpRegisterVector(IDT_INTERNAL, 0, DISPATCH_VECTOR, DISPATCH_LEVEL);
+#ifndef _M_AMD64
+    HalpRegisterVector(IDT_INTERNAL, 0, APIC_IPI_VECTOR, IPI_LEVEL);
+#endif
 
     /* Restore interrupt state */
     if (EnableInterrupts) EFlags |= EFLAGS_INTERRUPT_MASK;
@@ -640,6 +647,32 @@ HalpDispatchInterruptHandler(IN PKTRAP_FRAME TrapFrame)
     ApicLowerIrql(OldIrql);
 
     /* Exit the interrupt */
+    KiEoiHelper(TrapFrame);
+}
+
+VOID
+DECLSPEC_NORETURN
+FASTCALL
+HalpIpiInterruptHandler(
+    _In_ PKTRAP_FRAME TrapFrame)
+{
+    KIRQL OldIrql;
+
+    ASSERT(ApicGetProcessorIrql() == IPI_LEVEL);
+
+    /* Enter the interrupt trap and raise to IPI_LEVEL. */
+    KiEnterInterruptTrap(TrapFrame);
+    if (!HalBeginSystemInterrupt(IPI_LEVEL, APIC_IPI_VECTOR, &OldIrql))
+    {
+        KiEoiHelper(TrapFrame);
+    }
+
+    /* Service all requests accumulated for this processor. */
+    KiIpiServiceRoutine(TrapFrame, NULL);
+
+    /* Complete the interrupt and return through the common trap exit. */
+    _disable();
+    HalEndSystemInterrupt(OldIrql, TrapFrame);
     KiEoiHelper(TrapFrame);
 }
 #endif
@@ -885,4 +918,3 @@ KeRaiseIrqlToSynchLevel(VOID)
 }
 
 #endif /* !_M_AMD64 */
-
