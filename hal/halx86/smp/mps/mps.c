@@ -15,8 +15,7 @@
 
 /* GLOBALS ********************************************************************/
 
-static // TODO: While HalpParseApicTables() is UNIMPLEMENTED.
-ULONG PhysicalProcessorCount;
+HALP_APIC_INFO_TABLE HalpApicInfoTable;
 
 static PROCESSOR_IDENTITY HalpStaticProcessorIdentity[MAXIMUM_PROCESSORS];
 const PPROCESSOR_IDENTITY HalpProcessorIdentity = HalpStaticProcessorIdentity;
@@ -39,8 +38,8 @@ HalpPrintApicTables(VOID)
 #if DBG
     ULONG i;
 
-    DPRINT1("Physical processor count: %lu\n", PhysicalProcessorCount);
-    for (i = 0; i < PhysicalProcessorCount; i++)
+    DPRINT1("Physical processor count: %lu\n", HalpApicInfoTable.ProcessorCount);
+    for (i = 0; i < HalpApicInfoTable.ProcessorCount; i++)
     {
         DPRINT1(" Processor %lu: ProcessorId %u, LapicId %u, ProcessorStarted %u, BSPCheck %u, ProcessorPrcb %p\n",
                 i,
