@@ -2679,8 +2679,8 @@ NtUserExcludeUpdateRgn(
         else
         {
             pm = UserGetPrimaryMonitor();
-            hrgnUpdate = GreCreateRectRgn(0, 0, 0, 0);
-            hrgnMonitor = GreCreateRectRgn(0, 0, 0, 0);
+            hrgnUpdate = NtGdiCreateRectRgn(0, 0, 0, 0);
+            hrgnMonitor = NtGdiCreateRectRgn(0, 0, 0, 0);
             if (pm && hrgnUpdate && hrgnMonitor &&
                 NtGdiCombineRgn(hrgnUpdate,
                                 pWnd->hrgnUpdate,
