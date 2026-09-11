@@ -177,6 +177,10 @@ HalRequestIpiSpecifyVector(
     /* Sanitize the target set */
     TargetSet &= ActiveProcessors;
 
+    /* An empty set must not match the all-excluding-self shorthand. */
+    if (TargetSet == 0)
+        return;
+
     /* Check if all processors are requested */
     if (TargetSet == ActiveProcessors)
     {

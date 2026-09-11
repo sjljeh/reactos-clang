@@ -39,6 +39,9 @@ FASTCALL
 HalpBroadcastClockIpi(
     _In_ UCHAR Vector)
 {
-    /* Send a clock IPI to all processors */
-    HalpBroadcastIpiSpecifyVector(Vector, FALSE);
+    KAFFINITY TargetSet;
+
+    /* Do not interrupt processors that have not completed HAL startup. */
+    TargetSet = HalpActiveProcessors & ~KeGetCurrentPrcb()->SetMember;
+    HalRequestIpiSpecifyVector(TargetSet, Vector);
 }
