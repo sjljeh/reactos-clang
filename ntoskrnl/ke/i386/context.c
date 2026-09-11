@@ -24,11 +24,15 @@ KiSwapProcess(IN PKPROCESS NewProcess,
     PKIPCR Pcr = (PKIPCR)KeGetPcr();
 #ifdef CONFIG_SMP
     LONG SetMember;
+#endif
 
-    /* Update active processor mask */
+    if (NewProcess == OldProcess)
+        return;
+
+#ifdef CONFIG_SMP
+    /* Publish the new address-space residency before loading its CR3. */
     SetMember = (LONG)Pcr->SetMember;
-    InterlockedXor((PLONG)&NewProcess->ActiveProcessors, SetMember);
-    InterlockedXor((PLONG)&OldProcess->ActiveProcessors, SetMember);
+    InterlockedOr((PLONG)&NewProcess->ActiveProcessors, SetMember);
 #endif
 
     /* Check for new LDT */
@@ -49,6 +53,11 @@ KiSwapProcess(IN PKPROCESS NewProcess,
 
     /* Update CR3 */
     __writecr3(NewProcess->DirectoryTableBase[0]);
+
+#ifdef CONFIG_SMP
+    /* The old process can no longer have user translations on this CPU. */
+    InterlockedAnd((PLONG)&OldProcess->ActiveProcessors, ~SetMember);
+#endif
 
     /* Clear GS */
     Ke386SetGs(0);

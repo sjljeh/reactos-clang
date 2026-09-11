@@ -351,6 +351,12 @@ KiSwapContextExit(IN PKTHREAD OldThread,
     NewProcess = NewThread->ApcState.Process;
     if (OldProcess != NewProcess)
     {
+#ifdef CONFIG_SMP
+        /* Publish residency before the new address space can be observed. */
+        InterlockedOr((PLONG)&NewProcess->ActiveProcessors,
+                      (LONG)Pcr->SetMember);
+#endif
+
         /* Check if there is a different LDT */
         if (*(PULONGLONG)&OldProcess->LdtDescriptor != *(PULONGLONG)&NewProcess->LdtDescriptor)
         {
@@ -369,6 +375,12 @@ KiSwapContextExit(IN PKTHREAD OldThread,
 
         /* Switch address space and flush TLB */
         __writecr3(NewProcess->DirectoryTableBase[0]);
+
+#ifdef CONFIG_SMP
+        /* This processor can no longer cache user mappings from the old process. */
+        InterlockedAnd((PLONG)&OldProcess->ActiveProcessors,
+                       ~(LONG)Pcr->SetMember);
+#endif
     }
 
     /* Update the old thread's cycle time */
