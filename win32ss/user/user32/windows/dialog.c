@@ -52,7 +52,7 @@ typedef struct
     HMENU     hMenu;       /* Dialog menu */
     UINT      xBaseUnit;   /* Dialog units (depends on the font) */
     UINT      yBaseUnit;
-    INT       idResult;    /* EndDialog() result / default pushbutton ID */
+    INT_PTR   idResult;    /* EndDialog() result / default pushbutton ID */
     UINT      flags;       /* EndDialog() called for this dialog */
 } DIALOGINFO;
 
@@ -492,11 +492,11 @@ static HWND DIALOG_FindMsgDestination( HWND hwndDlg )
  /***********************************************************************
  *           DIALOG_DoDialogBox
  */
-INT DIALOG_DoDialogBox( HWND hwnd, HWND owner )
+INT_PTR DIALOG_DoDialogBox( HWND hwnd, HWND owner )
 {
     DIALOGINFO * dlgInfo;
     MSG msg;
-    INT retval;
+    INT_PTR retval;
     BOOL bFirstEmpty;
     PWND pWnd;
 
@@ -2108,7 +2108,7 @@ EndDialog(
     HWND owner;
     BOOL wasActive;
 
-    TRACE("%p %ld\n", hwnd, retval );
+    TRACE("%p %Id\n", hwnd, retval );
 
     if (!(dlgInfo = GETDLGINFO(hwnd)))
     {
