@@ -203,7 +203,7 @@ void OnInit(
 
 	//	clear the target existence flag
 
-	SetWindowLong(hDlg, DWL_USER, 0);
+	SetWindowLongPtr(hDlg, DWLP_USER, 0);
 
 	// Set dialog window title
 
@@ -264,7 +264,7 @@ void OnTarget(
 
 	//	clear the target existence flag
 
-	SetWindowLong(hDlg, DWL_USER, 0);
+	SetWindowLongPtr(hDlg, DWLP_USER, 0);
 
 	//	clear the description and hint text
 
@@ -391,7 +391,7 @@ void OnTarget(
 
 	//	target file exists and overwritable
 
-	SetWindowLong(hDlg, DWL_USER, 1);
+	SetWindowLongPtr(hDlg, DWLP_USER, 1);
 }
 
 
@@ -450,7 +450,7 @@ void OnOverwrite(
 	HWND			hDlg,
 	HWND			hCheck)
 {
-	if (GetWindowLong(hDlg, DWL_USER)) {
+	if (GetWindowLongPtr(hDlg, DWLP_USER)) {
 		//	the target file exists and overwritable
 		if (SendMessage(hCheck, BM_GETCHECK, 0, 0) != BST_CHECKED) {
 			EnableWindow(GetDlgItem(hDlg, IDOK), FALSE);
@@ -497,7 +497,7 @@ DWORD OnOK(
 		return ERROR_INVALID_FUNCTION;
 	}
 
-	if (GetWindowLong(hDlg, DWL_USER)) {
+	if (GetWindowLongPtr(hDlg, DWLP_USER)) {
 		//	the target file exists and overwritable
 		overwrite = (IsDlgButtonChecked(hDlg, IDC_OVERWRITE) == BST_CHECKED);
 		truncate = (IsDlgButtonChecked(hDlg, IDC_TRUNCATE) == BST_CHECKED);
