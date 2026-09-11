@@ -1847,7 +1847,7 @@ co_UserGetUpdateRgn(PWND Window, HRGN hRgn, BOOL bErase)
       UserDerefObjectCo(Window);
    }
 
-   Window->state &= ~WNDS_UPDATEDIRTY;
+   InterlockedAnd((PLONG)&Window->state, ~WNDS_UPDATEDIRTY);
 
    if (Window->hrgnUpdate == NULL)
    {
@@ -1916,7 +1916,7 @@ co_UserGetUpdateRect(PWND Window, PRECT pRect, BOOL bErase)
       UserDerefObjectCo(Window);
    }
 
-   Window->state &= ~WNDS_UPDATEDIRTY;
+   InterlockedAnd((PLONG)&Window->state, ~WNDS_UPDATEDIRTY);
 
    if (Window->hrgnUpdate == NULL)
    {
@@ -1981,7 +1981,10 @@ NtUserGetUpdateRgn(HWND hWnd, HRGN hRgn, BOOL bErase)
    INT ret = ERROR;
 
    TRACE("Enter NtUserGetUpdateRgn\n");
-   UserEnterExclusive();
+   if (bErase)
+      UserEnterExclusive();
+   else
+      UserEnterShared();
 
    Window = UserGetWindowObject(hWnd);
    if (Window)
@@ -2010,7 +2013,10 @@ NtUserGetUpdateRect(HWND hWnd, LPRECT UnsafeRect, BOOL bErase)
    BOOL Ret = FALSE;
 
    TRACE("Enter NtUserGetUpdateRect\n");
-   UserEnterExclusive();
+   if (bErase)
+      UserEnterExclusive();
+   else
+      UserEnterShared();
 
    if (!(Window = UserGetWindowObject(hWnd)))
    {

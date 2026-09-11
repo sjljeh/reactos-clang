@@ -2100,7 +2100,7 @@ NtUserDrawIconEx(
     BOOL Ret;
 
     TRACE("Enter NtUserDrawIconEx\n");
-    UserEnterExclusive();
+    UserEnterShared();
 
     if (!(pIcon = UserGetCurIconObject(hIcon)))
     {
@@ -2108,6 +2108,11 @@ NtUserDrawIconEx(
         UserLeave();
         return FALSE;
     }
+
+    /* Cursor and icon image data is immutable once the object is published.
+     * Keep the object referenced, but do not retain the global USER resource
+     * over the GDI surface operation. */
+    UserLeave();
 
     Ret = UserDrawIconEx(hdc,
                          xLeft,
@@ -2119,6 +2124,7 @@ NtUserDrawIconEx(
                          hbrFlickerFreeDraw,
                          diFlags);
 
+    UserEnterShared();
     UserDereferenceObject(pIcon);
 
     UserLeave();
