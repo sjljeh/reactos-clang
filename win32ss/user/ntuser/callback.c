@@ -222,8 +222,8 @@ co_IntClientLoadLibrary(PUNICODE_STRING pstrLibName,
    _SEH2_TRY
    {
        /* Probe and copy the usermode result data */
-       ProbeForRead(ResultPointer, sizeof(HMODULE), 1);
-       bResult = *(BOOL*)ResultPointer;
+        ProbeForRead(ResultPointer, sizeof(bResult), 1);
+        bResult = *(BOOL*)ResultPointer;
    }
    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
    {

@@ -547,7 +547,7 @@ User32CallClientLoadLibraryFromKernel(PVOID Arguments, ULONG ArgumentLength)
                                 Argument->Unload,
                                 Argument->ApiHook);
 
-    return ZwCallbackReturn(&bResult, sizeof(HINSTANCE), STATUS_SUCCESS);
+    return ZwCallbackReturn(&bResult, sizeof(bResult), STATUS_SUCCESS);
 }
 
 NTSTATUS WINAPI
@@ -846,6 +846,5 @@ User32CallEventProcFromKernel(PVOID Arguments, ULONG ArgumentLength)
 
   return ZwCallbackReturn(NULL, 0, STATUS_SUCCESS);
 }
-
 
 
