@@ -22,6 +22,12 @@ LIST_ENTRY ExSystemLookasideListHead;
 LIST_ENTRY ExPoolLookasideListHead;
 GENERAL_LOOKASIDE ExpSmallNPagedPoolLookasideLists[NUMBER_POOL_LOOKASIDE_LISTS];
 GENERAL_LOOKASIDE ExpSmallPagedPoolLookasideLists[NUMBER_POOL_LOOKASIDE_LISTS];
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+KSPIN_LOCK ExpGlobalNPagedPoolLookasideLock;
+KSPIN_LOCK ExpProcessorNPagedPoolLookasideLocks[MAXIMUM_PROCESSORS];
+EX_PUSH_LOCK ExpGlobalPagedPoolLookasideLock;
+EX_PUSH_LOCK ExpProcessorPagedPoolLookasideLocks[MAXIMUM_PROCESSORS];
+#endif
 
 #if defined(CONFIG_SMP) && defined(_M_IX86)
 /* Keep the hot pool caches processor-local; the existing arrays are the
@@ -74,6 +80,8 @@ ExInitPoolLookasidePointers(VOID)
     PGENERAL_LOOKASIDE LocalEntry;
 
     ASSERT(Prcb->Number < MAXIMUM_PROCESSORS);
+    KeInitializeSpinLock(&ExpProcessorNPagedPoolLookasideLocks[Prcb->Number]);
+    ExInitializePushLock(&ExpProcessorPagedPoolLookasideLocks[Prcb->Number]);
 #endif
 
     /* Loop for all pool lists */
@@ -143,6 +151,10 @@ ExpInitLookasideLists(VOID)
     InitializeListHead(&ExPoolLookasideListHead);
     KeInitializeSpinLock(&ExpNonPagedLookasideListLock);
     KeInitializeSpinLock(&ExpPagedLookasideListLock);
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+    KeInitializeSpinLock(&ExpGlobalNPagedPoolLookasideLock);
+    ExInitializePushLock(&ExpGlobalPagedPoolLookasideLock);
+#endif
 
     /* Initialize the system lookaside lists */
     for (i = 0; i < NUMBER_POOL_LOOKASIDE_LISTS; i++)

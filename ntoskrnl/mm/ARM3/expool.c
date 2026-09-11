@@ -71,6 +71,61 @@ ULONGLONG MiLastPoolDumpTime;
 #define POOL_NEXT_BLOCK(x)  POOL_BLOCK((x), (x)->BlockSize)
 #define POOL_PREV_BLOCK(x)  POOL_BLOCK((x), -((x)->PreviousSize))
 
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+static
+VOID
+ExpAcquirePoolLookasideLock(
+    _In_ PKPRCB Prcb,
+    _In_ POOL_TYPE PoolType,
+    _In_ BOOLEAN Global,
+    _Out_ PKIRQL OldIrql)
+{
+    ASSERT(Prcb->Number < MAXIMUM_PROCESSORS);
+
+    if (PoolType == PagedPool)
+    {
+        PEX_PUSH_LOCK Lock = Global ?
+                             &ExpGlobalPagedPoolLookasideLock :
+                             &ExpProcessorPagedPoolLookasideLocks[Prcb->Number];
+        *OldIrql = KeGetCurrentIrql();
+        KeEnterCriticalRegion();
+        ExAcquirePushLockExclusive(Lock);
+    }
+    else
+    {
+        PKSPIN_LOCK Lock = Global ?
+                            &ExpGlobalNPagedPoolLookasideLock :
+                            &ExpProcessorNPagedPoolLookasideLocks[Prcb->Number];
+        KeAcquireSpinLock(Lock, OldIrql);
+    }
+}
+
+static
+VOID
+ExpReleasePoolLookasideLock(
+    _In_ PKPRCB Prcb,
+    _In_ POOL_TYPE PoolType,
+    _In_ BOOLEAN Global,
+    _In_ KIRQL OldIrql)
+{
+    if (PoolType == PagedPool)
+    {
+        PEX_PUSH_LOCK Lock = Global ?
+                             &ExpGlobalPagedPoolLookasideLock :
+                             &ExpProcessorPagedPoolLookasideLocks[Prcb->Number];
+        ExReleasePushLockExclusive(Lock);
+        KeLeaveCriticalRegion();
+    }
+    else
+    {
+        PKSPIN_LOCK Lock = Global ?
+                            &ExpGlobalNPagedPoolLookasideLock :
+                            &ExpProcessorNPagedPoolLookasideLocks[Prcb->Number];
+        KeReleaseSpinLock(Lock, OldIrql);
+    }
+}
+#endif
+
 /*
  * Pool list access debug macros, similar to Arthur's pfnlist.c work.
  * Microsoft actually implements similar checks in the Windows Server 2003 SP1
@@ -2092,6 +2147,33 @@ ExAllocatePoolWithTag(IN POOL_TYPE PoolType,
     //
     if (i <= NUMBER_POOL_LOOKASIDE_LISTS)
     {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+        /* Serialize each processor-local cache independently. The fallback
+         * cache is shared and uses its corresponding global lock. */
+        Prcb = KeGetCurrentPrcb();
+        ExpAcquirePoolLookasideLock(Prcb, PoolType, FALSE, &OldIrql);
+        LookasideList = (PoolType == PagedPool) ?
+                         Prcb->PPPagedLookasideList[i - 1].P :
+                         Prcb->PPNPagedLookasideList[i - 1].P;
+        LookasideList->TotalAllocates++;
+        Entry = (PPOOL_HEADER)InterlockedPopEntrySList(&LookasideList->ListHead);
+        if (Entry)
+            LookasideList->AllocateHits++;
+        ExpReleasePoolLookasideLock(Prcb, PoolType, FALSE, OldIrql);
+
+        if (!Entry)
+        {
+            ExpAcquirePoolLookasideLock(Prcb, PoolType, TRUE, &OldIrql);
+            LookasideList = (PoolType == PagedPool) ?
+                             Prcb->PPPagedLookasideList[i - 1].L :
+                             Prcb->PPNPagedLookasideList[i - 1].L;
+            LookasideList->TotalAllocates++;
+            Entry = (PPOOL_HEADER)InterlockedPopEntrySList(&LookasideList->ListHead);
+            if (Entry)
+                LookasideList->AllocateHits++;
+            ExpReleasePoolLookasideLock(Prcb, PoolType, TRUE, OldIrql);
+        }
+#else
         //
         // Try popping it from the per-CPU lookaside list
         //
@@ -2111,13 +2193,16 @@ ExAllocatePoolWithTag(IN POOL_TYPE PoolType,
             LookasideList->TotalAllocates++;
             Entry = (PPOOL_HEADER)InterlockedPopEntrySList(&LookasideList->ListHead);
         }
+#endif
 
         //
         // If we were able to pop it, update the accounting and return the block
         //
         if (Entry)
         {
+#if !(defined(CONFIG_SMP) && defined(_M_IX86))
             LookasideList->AllocateHits++;
+#endif
 
             //
             // Get the real entry, write down its pool type, and track it
@@ -2783,6 +2868,38 @@ ExFreePoolWithTag(IN PVOID P,
     //
     if (BlockSize <= NUMBER_POOL_LOOKASIDE_LISTS)
     {
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+        /* Serialize each private cache independently and the fallback cache
+         * globally, without raising paged-pool accesses to DISPATCH_LEVEL. */
+        Prcb = KeGetCurrentPrcb();
+        ExpAcquirePoolLookasideLock(Prcb, PoolType, FALSE, &OldIrql);
+        LookasideList = (PoolType == PagedPool) ?
+                         Prcb->PPPagedLookasideList[BlockSize - 1].P :
+                         Prcb->PPNPagedLookasideList[BlockSize - 1].P;
+        LookasideList->TotalFrees++;
+        if (ExQueryDepthSList(&LookasideList->ListHead) < LookasideList->Depth)
+        {
+            LookasideList->FreeHits++;
+            InterlockedPushEntrySList(&LookasideList->ListHead, P);
+            ExpReleasePoolLookasideLock(Prcb, PoolType, FALSE, OldIrql);
+            return;
+        }
+        ExpReleasePoolLookasideLock(Prcb, PoolType, FALSE, OldIrql);
+
+        ExpAcquirePoolLookasideLock(Prcb, PoolType, TRUE, &OldIrql);
+        LookasideList = (PoolType == PagedPool) ?
+                         Prcb->PPPagedLookasideList[BlockSize - 1].L :
+                         Prcb->PPNPagedLookasideList[BlockSize - 1].L;
+        LookasideList->TotalFrees++;
+        if (ExQueryDepthSList(&LookasideList->ListHead) < LookasideList->Depth)
+        {
+            LookasideList->FreeHits++;
+            InterlockedPushEntrySList(&LookasideList->ListHead, P);
+            ExpReleasePoolLookasideLock(Prcb, PoolType, TRUE, OldIrql);
+            return;
+        }
+        ExpReleasePoolLookasideLock(Prcb, PoolType, TRUE, OldIrql);
+#else
         //
         // Try pushing it into the per-CPU lookaside list
         //
@@ -2810,6 +2927,7 @@ ExFreePoolWithTag(IN PVOID P,
             InterlockedPushEntrySList(&LookasideList->ListHead, P);
             return;
         }
+#endif
     }
 
     //

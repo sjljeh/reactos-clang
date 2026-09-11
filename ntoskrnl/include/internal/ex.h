@@ -35,6 +35,12 @@ extern LIST_ENTRY ExpNonPagedLookasideListHead;
 extern LIST_ENTRY ExpPagedLookasideListHead;
 extern KSPIN_LOCK ExpNonPagedLookasideListLock;
 extern KSPIN_LOCK ExpPagedLookasideListLock;
+#if defined(CONFIG_SMP) && defined(_M_IX86)
+extern KSPIN_LOCK ExpGlobalNPagedPoolLookasideLock;
+extern KSPIN_LOCK ExpProcessorNPagedPoolLookasideLocks[MAXIMUM_PROCESSORS];
+extern EX_PUSH_LOCK ExpGlobalPagedPoolLookasideLock;
+extern EX_PUSH_LOCK ExpProcessorPagedPoolLookasideLocks[MAXIMUM_PROCESSORS];
+#endif
 extern ULONG ExCriticalWorkerThreads;
 extern ULONG ExDelayedWorkerThreads;
 
