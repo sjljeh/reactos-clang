@@ -487,7 +487,6 @@ NtUserScrollDC(
    RECTL rcScroll, rcClip, rcUpdate;
 
    TRACE("Enter NtUserScrollDC\n");
-   UserEnterExclusive();
 
    _SEH2_TRY
    {
@@ -518,6 +517,7 @@ NtUserScrollDC(
       goto Exit; // Return FALSE
    }
 
+   UserDceAcquireShared();
    Result = UserScrollDC( hDC,
                           dx,
                           dy,
@@ -526,6 +526,7 @@ NtUserScrollDC(
                           hrgnUpdate,
                           NULL,
                           prcUnsafeUpdate ? &rcUpdate : NULL);
+   UserDceRelease();
    if(Result == ERROR)
    {
       /* FIXME: Only if hRgnUpdate is invalid we should SetLastError(ERROR_INVALID_HANDLE) */
@@ -556,7 +557,6 @@ NtUserScrollDC(
 
 Exit:
    TRACE("Leave NtUserScrollDC, ret=%i\n", Ret);
-   UserLeave();
    return Ret;
 }
 
