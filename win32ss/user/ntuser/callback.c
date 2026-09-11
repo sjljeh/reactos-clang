@@ -342,6 +342,11 @@ co_IntCallWindowProc(WNDPROC Proc,
    {
       ERR("Error Callback to User space Status %lx Message %d\n",Status,Message);
       UserEnterCo();
+      IntRestoreTebWndCallback(Wnd, pWnd, pActCtx);
+      if (lParamBufferSize != -1)
+      {
+         IntCbFreeMemory(Arguments);
+      }
       return 0;
    }
 
