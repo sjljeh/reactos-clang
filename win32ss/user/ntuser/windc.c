@@ -55,6 +55,18 @@ DceLeave(VOID)
     KeLeaveCriticalRegion();
 }
 
+VOID FASTCALL
+UserDceAcquireShared(VOID)
+{
+    DceEnterShared();
+}
+
+VOID FASTCALL
+UserDceRelease(VOID)
+{
+    DceLeave();
+}
+
 //
 // This should be moved to dc.c or dcutil.c.
 //

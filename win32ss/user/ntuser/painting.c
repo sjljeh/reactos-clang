@@ -1612,16 +1612,19 @@ IntFillWindowRect(HDC hDC,
    POINT ppt;
    INT type;
 
+   UserDceAcquireShared();
    type = GdiGetClipBox(hDC, &Rect);
    if (type == NULLREGION ||
        (ParentDc && !RECTL_bIntersectRect(&Rect, &Rect, ClientRect)))
    {
+      UserDceRelease();
       return FALSE;
    }
 
    GreSetBrushOrg(hDC, x, y, &ppt);
    FillRect(hDC, &Rect, hBrush);
    GreSetBrushOrg(hDC, ppt.x, ppt.y, NULL);
+   UserDceRelease();
    return TRUE;
 }
 
@@ -2573,14 +2576,14 @@ NtUserDrawCaption(HWND hWnd,
 }
 
 INT FASTCALL
-co_UserExcludeUpdateRgn(HDC hDC, PWND Window)
+co_UserExcludeUpdateRgn(HDC hDC, HRGN hrgnUpdate, HRGN hrgnMonitor)
 {
     POINT pt;
     RECT rc;
 
-    if (Window->hrgnUpdate)
+    if (hrgnUpdate)
     {
-        if (Window->hrgnUpdate == HRGN_WINDOW)
+        if (hrgnUpdate == HRGN_WINDOW)
         {
             return NtGdiIntersectClipRect(hDC, 0, 0, 0, 0);
         }
@@ -2597,17 +2600,10 @@ co_UserExcludeUpdateRgn(HDC hDC, PWND Window)
                 }
                 else
                 {
-                    HRGN hrgnScreen;
-                    PMONITOR pm = UserGetPrimaryMonitor();
-                    hrgnScreen = NtGdiCreateRectRgn(0,0,0,0);
-                    NtGdiCombineRgn(hrgnScreen, hrgnScreen, pm->hrgnMonitor, RGN_OR);
-
-                    NtGdiCombineRgn(hrgn, hrgnScreen, NULL, RGN_COPY);
-
-                    GreDeleteObject(hrgnScreen);
+                    NtGdiCombineRgn(hrgn, hrgnMonitor, NULL, RGN_COPY);
                 }
 
-                NtGdiCombineRgn(hrgn, hrgn, Window->hrgnUpdate, RGN_DIFF);
+                NtGdiCombineRgn(hrgn, hrgn, hrgnUpdate, RGN_DIFF);
 
                 NtGdiOffsetRgn(hrgn, -pt.x, -pt.y);
 
@@ -2632,19 +2628,57 @@ NtUserExcludeUpdateRgn(
 {
     INT ret = ERROR;
     PWND pWnd;
+    PMONITOR pm;
+    HRGN hrgnUpdate = NULL;
+    HRGN hrgnMonitor = NULL;
+    BOOL Ready = FALSE;
 
     TRACE("Enter NtUserExcludeUpdateRgn\n");
-    /* The window update region is sampled; the HDC owns its clip state. */
     UserEnterShared();
 
     pWnd = UserGetWindowObject(hWnd);
-
     if (hDC && pWnd)
-        ret = co_UserExcludeUpdateRgn(hDC, pWnd);
-
-    TRACE("Leave NtUserExcludeUpdateRgn, ret=%i\n", ret);
+    {
+        if (!pWnd->hrgnUpdate || pWnd->hrgnUpdate == HRGN_WINDOW)
+        {
+            hrgnUpdate = pWnd->hrgnUpdate;
+            Ready = TRUE;
+        }
+        else
+        {
+            pm = UserGetPrimaryMonitor();
+            hrgnUpdate = GreCreateRectRgn(0, 0, 0, 0);
+            hrgnMonitor = GreCreateRectRgn(0, 0, 0, 0);
+            if (pm && hrgnUpdate && hrgnMonitor &&
+                NtGdiCombineRgn(hrgnUpdate,
+                                pWnd->hrgnUpdate,
+                                NULL,
+                                RGN_COPY) != ERROR &&
+                NtGdiCombineRgn(hrgnMonitor,
+                                pm->hrgnMonitor,
+                                NULL,
+                                RGN_COPY) != ERROR)
+            {
+                Ready = TRUE;
+            }
+        }
+    }
 
     UserLeave();
+
+    if (Ready)
+    {
+        UserDceAcquireShared();
+        ret = co_UserExcludeUpdateRgn(hDC, hrgnUpdate, hrgnMonitor);
+        UserDceRelease();
+    }
+
+    if (hrgnUpdate > HRGN_WINDOW)
+        GreDeleteObject(hrgnUpdate);
+    if (hrgnMonitor)
+        GreDeleteObject(hrgnMonitor);
+
+    TRACE("Leave NtUserExcludeUpdateRgn, ret=%i\n", ret);
     return ret;
 }
 

@@ -72,6 +72,8 @@ HWND FASTCALL co_UserSetFocus(PWND Window);
 INT FASTCALL UserReleaseDC(PWND Window, HDC hDc, BOOL EndPaint);
 HDC FASTCALL UserGetDCEx(PWND Window OPTIONAL, HANDLE ClipRegion, ULONG Flags);
 HDC FASTCALL UserGetWindowDC(PWND Wnd);
+VOID FASTCALL UserDceAcquireShared(VOID);
+VOID FASTCALL UserDceRelease(VOID);
 
 /*************** SESSION.C ***************/
 
