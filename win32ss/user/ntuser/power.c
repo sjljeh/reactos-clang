@@ -320,18 +320,13 @@ IntWin32PowerManagementCleanup(VOID)
     ObDereferenceObject(gpPowerRequestCalloutEvent);
     gpPowerRequestCalloutEvent = NULL;
 
-    /*
-     * Enumerate all pending power callouts and free them. We do not
-     * need to do this with the lock held as the CSR process is tore
-     * apart during Win32k cleanup, so future power callouts would not
-     * be allowed anyway, therefore we are safe.
-     */
-    for (pWin32PwrCallout = IntGetNextPowerCallout(NULL);
-         pWin32PwrCallout != NULL;
-         pWin32PwrCallout = IntGetNextPowerCallout(pWin32PwrCallout))
+    /* Enumerate all pending power callouts and free them. */
+    IntAcquirePowerCalloutLock();
+    while ((pWin32PwrCallout = IntGetNextPowerCallout(NULL)) != NULL)
     {
         ExFreePoolWithTag(pWin32PwrCallout, USERTAG_POWER);
     }
+    IntReleasePowerCalloutLock();
 
     /* Tear apart the power callout lock mutex */
     ExFreePoolWithTag(gpPowerCalloutMutexLock, USERTAG_POWER);
