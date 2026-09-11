@@ -32,6 +32,8 @@ IntFlushScreen(
     _In_ const RECTL *prcl)
 {
     RECTL rcl;
+    SURFOBJ *psoShadow;
+    PVOID ScreenPtr;
     PBYTE pjSrc;
     PBYTE pjDest;
     ULONG cjScan;
@@ -39,7 +41,12 @@ IntFlushScreen(
     LONG lTemp;
     LONG y;
 
-    if (!ppdev->psoShadow || !ppdev->ScreenPtr)
+    psoShadow = ppdev->psoShadow;
+    ScreenPtr = InterlockedCompareExchangePointer(
+                    (PVOID volatile *)&ppdev->ScreenPtr,
+                    NULL,
+                    NULL);
+    if (!psoShadow || !ScreenPtr)
         return;
 
     if (prcl)
@@ -78,15 +85,15 @@ IntFlushScreen(
 
     cjPixel = ppdev->BitsPerPixel / 8;
     cjScan = (rcl.right - rcl.left) * cjPixel;
-    pjSrc = (PBYTE)ppdev->psoShadow->pvScan0 +
-            rcl.top * ppdev->psoShadow->lDelta + rcl.left * cjPixel;
-    pjDest = (PBYTE)ppdev->ScreenPtr +
+    pjSrc = (PBYTE)psoShadow->pvScan0 +
+            rcl.top * psoShadow->lDelta + rcl.left * cjPixel;
+    pjDest = (PBYTE)ScreenPtr +
              rcl.top * ppdev->ScreenDelta + rcl.left * cjPixel;
 
     /* Copy full-width rectangles in one operation when the pitches match. */
     if ((rcl.left == 0) &&
         (rcl.right == (LONG)ppdev->ScreenWidth) &&
-        (ppdev->psoShadow->lDelta == (LONG)ppdev->ScreenDelta))
+        (psoShadow->lDelta == (LONG)ppdev->ScreenDelta))
     {
         RtlCopyMemory(pjDest,
                       pjSrc,
@@ -97,7 +104,7 @@ IntFlushScreen(
         for (y = rcl.top; y < rcl.bottom; ++y)
         {
             RtlCopyMemory(pjDest, pjSrc, cjScan);
-            pjSrc += ppdev->psoShadow->lDelta;
+            pjSrc += psoShadow->lDelta;
             pjDest += ppdev->ScreenDelta;
         }
     }

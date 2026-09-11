@@ -40,9 +40,13 @@ DrvEnableSurface(
    SURFOBJ *psoShadow = NULL;
    ULONG BitmapType;
    SIZEL ScreenSize;
+   ULONG FrameBufferSize;
    VIDEO_MEMORY VideoMemory;
    VIDEO_MEMORY_INFORMATION VideoMemoryInfo;
    ULONG ulTemp;
+
+   RtlZeroMemory(&VideoMemory, sizeof(VideoMemory));
+   RtlZeroMemory(&VideoMemoryInfo, sizeof(VideoMemoryInfo));
 
    /*
     * Set video mode of our adapter.
@@ -59,7 +63,6 @@ DrvEnableSurface(
     * Map the framebuffer into our memory.
     */
 
-   VideoMemory.RequestedVirtualAddress = NULL;
    if (EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_MAP_VIDEO_MEMORY,
                           &VideoMemory, sizeof(VIDEO_MEMORY),
                           &VideoMemoryInfo, sizeof(VIDEO_MEMORY_INFORMATION),
@@ -68,7 +71,18 @@ DrvEnableSurface(
       return NULL;
    }
 
-   ppdev->ScreenPtr = VideoMemoryInfo.FrameBufferBase;
+   if ((VideoMemoryInfo.FrameBufferBase == NULL) ||
+       (ppdev->ScreenHeight == 0) ||
+       (ppdev->ScreenDelta > (~0UL / ppdev->ScreenHeight)))
+   {
+      goto Failure;
+   }
+
+   FrameBufferSize = ppdev->ScreenDelta * ppdev->ScreenHeight;
+   if (VideoMemoryInfo.FrameBufferLength < FrameBufferSize)
+   {
+      goto Failure;
+   }
 
    switch (ppdev->BitsPerPixel)
    {
@@ -136,6 +150,10 @@ DrvEnableSurface(
       ppdev->hSurfShadow = hShadow;
       ppdev->psoShadow = psoShadow;
 
+      /* Publish VRAM only after every surface dependency is initialized. */
+      InterlockedExchangePointer((PVOID volatile *)&ppdev->ScreenPtr,
+                                 VideoMemoryInfo.FrameBufferBase);
+
       /* EngCreateBitmap zeroes the shadow; make VRAM agree with it. */
       IntFlushScreen(ppdev, NULL);
       return hSurface;
@@ -153,7 +171,7 @@ DrvEnableSurface(
                                      ppdev->ScreenDelta,
                                      BitmapType,
                                      (ppdev->ScreenDelta > 0) ? BMF_TOPDOWN : 0,
-                                     ppdev->ScreenPtr);
+                                     VideoMemoryInfo.FrameBufferBase);
    if (hSurface == NULL)
       goto Failure;
 
@@ -164,18 +182,23 @@ DrvEnableSurface(
    }
 
    ppdev->hSurfEng = hSurface;
+   InterlockedExchangePointer((PVOID volatile *)&ppdev->ScreenPtr,
+                              VideoMemoryInfo.FrameBufferBase);
    return hSurface;
 
 Failure:
-   VideoMemory.RequestedVirtualAddress = ppdev->ScreenPtr;
-   EngDeviceIoControl(ppdev->hDriver,
-                      IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
-                      &VideoMemory,
-                      sizeof(VIDEO_MEMORY),
-                      NULL,
-                      0,
-                      &ulTemp);
-   ppdev->ScreenPtr = NULL;
+   if (VideoMemoryInfo.FrameBufferBase != NULL)
+   {
+      VideoMemory.RequestedVirtualAddress = VideoMemoryInfo.FrameBufferBase;
+      EngDeviceIoControl(ppdev->hDriver,
+                         IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
+                         &VideoMemory,
+                         sizeof(VIDEO_MEMORY),
+                         NULL,
+                         0,
+                         &ulTemp);
+   }
+   InterlockedExchangePointer((PVOID volatile *)&ppdev->ScreenPtr, NULL);
    return NULL;
 }
 
@@ -196,6 +219,11 @@ DrvDisableSurface(
    DWORD ulTemp;
    VIDEO_MEMORY VideoMemory;
    PPDEV ppdev = (PPDEV)dhpdev;
+   PVOID ScreenPtr;
+
+   /* Stop new flushes before dismantling their source and destination. */
+   ScreenPtr = InterlockedExchangePointer((PVOID volatile *)&ppdev->ScreenPtr,
+                                          NULL);
 
    if (ppdev->hSurfEng != NULL)
    {
@@ -224,10 +252,9 @@ DrvDisableSurface(
     * Unmap the framebuffer.
     */
 
-   VideoMemory.RequestedVirtualAddress = ((PPDEV)dhpdev)->ScreenPtr;
+   VideoMemory.RequestedVirtualAddress = ScreenPtr;
    EngDeviceIoControl(((PPDEV)dhpdev)->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                       &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
-   ppdev->ScreenPtr = NULL;
 }
 
 /*
