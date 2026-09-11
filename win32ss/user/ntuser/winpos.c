@@ -10,6 +10,9 @@
 #include <immdev.h>
 DBG_DEFAULT_CHANNEL(UserWinpos);
 
+/* Changes that can invalidate a visible-region snapshot used for copy-bits. */
+static volatile LONG gWindowLayoutGeneration;
+
 /* GLOBALS *******************************************************************/
 
 #define MINMAX_NOSWP  (0x00010000)
@@ -1820,6 +1823,8 @@ co_WinPosSetWindowPos(
    PWND Ancestor;
    PWND Child;
    BOOL bPointerInWindow, PosChanged = FALSE, ZOrderChanged = FALSE;
+   BOOL CopyBitsValid = TRUE;
+   LONG LayoutGeneration;
    PTHREADINFO pti = PsGetCurrentThreadWin32Thread();
 
    ASSERT_REFS_CO(Window);
@@ -1887,6 +1892,7 @@ co_WinPosSetWindowPos(
       WinPos.hwndInsertAfter = WinPosDoOwnedPopups(Window, WinPos.hwndInsertAfter);
    }
 
+   LayoutGeneration = InterlockedCompareExchange(&gWindowLayoutGeneration, 0, 0);
    if (!(WinPos.flags & SWP_NOREDRAW))
    {
       /* Compute the visible region before the window position is changed */
@@ -1937,6 +1943,10 @@ co_WinPosSetWindowPos(
    }
 
    WvrFlags = co_WinPosDoNCCALCSize(Window, &WinPos, &NewWindowRect, &NewClientRect, valid_rects);
+
+   /* WM_NCCALCSIZE can reenter USER and alter another window's layout. */
+   if (InterlockedCompareExchange(&gWindowLayoutGeneration, 0, 0) != LayoutGeneration)
+      CopyBitsValid = FALSE;
 
 //   ERR("co_WinPosDoNCCALCSize returned 0x%x\n valid dest: %d %d %d %d\n valid src : %d %d %d %d\n", WvrFlags,
 //      valid_rects[0].left,valid_rects[0].top,valid_rects[0].right,valid_rects[0].bottom,
@@ -2016,6 +2026,28 @@ co_WinPosSetWindowPos(
       IntCheckFullscreen(Window);
    }
 
+   /* Shell and event callbacks above can also invalidate VisBefore. */
+   if (InterlockedCompareExchange(&gWindowLayoutGeneration, 0, 0) != LayoutGeneration)
+      CopyBitsValid = FALSE;
+
+   if (ZOrderChanged ||
+       (OldWindowRect.left != NewWindowRect.left) ||
+       (OldWindowRect.top != NewWindowRect.top) ||
+       (OldWindowRect.right != NewWindowRect.right) ||
+       (OldWindowRect.bottom != NewWindowRect.bottom) ||
+       (OldClientRect.left != NewClientRect.left) ||
+       (OldClientRect.top != NewClientRect.top) ||
+       (OldClientRect.right != NewClientRect.right) ||
+       (OldClientRect.bottom != NewClientRect.bottom) ||
+       (WinPos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW)))
+   {
+      LayoutGeneration = InterlockedIncrement(&gWindowLayoutGeneration);
+   }
+   else
+   {
+      LayoutGeneration = InterlockedCompareExchange(&gWindowLayoutGeneration, 0, 0);
+   }
+
    if (Window->hrgnUpdate != NULL && Window->hrgnUpdate != HRGN_WINDOW)
    {
       NtGdiOffsetRgn(Window->hrgnUpdate,
@@ -2080,7 +2112,11 @@ co_WinPosSetWindowPos(
        * class need to be completely repainted on (horizontal/vertical) size
        * change.
        */
-      if (VisBefore != NULL &&
+      if (InterlockedCompareExchange(&gWindowLayoutGeneration, 0, 0) != LayoutGeneration)
+         CopyBitsValid = FALSE;
+
+      if (CopyBitsValid &&
+          VisBefore != NULL &&
           VisAfter != NULL &&
           !(WvrFlags & WVR_REDRAW) &&
           !(WinPos.flags & SWP_NOCOPYBITS) &&
