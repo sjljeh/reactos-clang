@@ -551,6 +551,7 @@ KiQuantumEnd(VOID)
     Thread->WaitIrql = APC_LEVEL;
 
     /* Swap threads */
+    KiSchedulerCpuData[Prcb->Number].QuantumEndSwitches++;
     KiSwapContext(APC_LEVEL, Thread);
 
     /* Lower IRQL back to DISPATCH_LEVEL */

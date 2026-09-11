@@ -1031,6 +1031,7 @@ KiSwapThread(IN PKTHREAD CurrentThread,
 #endif
     {
         /* Swap contexts */
+        KiSchedulerCpuData[Prcb->Number].WaitSwitches++;
         ApcState = KiSwapContext(WaitIrql, CurrentThread);
     }
 
@@ -1491,6 +1492,7 @@ NtYieldExecution(VOID)
             ASSERT(OldIrql <= DISPATCH_LEVEL);
 
             /* Swap to new thread */
+            KiSchedulerCpuData[Prcb->Number].YieldSwitches++;
             KiSwapContext(APC_LEVEL, Thread);
             Status = STATUS_SUCCESS;
         }

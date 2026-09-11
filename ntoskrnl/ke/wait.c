@@ -249,6 +249,7 @@ KiExitDispatcher(IN KIRQL OldIrql)
     Thread->WaitIrql = OldIrql;
 
     /* Swap threads and check if APCs were pending */
+    KiSchedulerCpuData[Prcb->Number].PreemptSwitches++;
     PendingApc = KiSwapContext(OldIrql, Thread);
     if (PendingApc)
     {

@@ -299,7 +299,10 @@ KiIdleLoop(VOID)
 
             /* Switch away from the idle thread */
             if (NewThread)
+            {
+                KiSchedulerCpuData[Prcb->Number].IdleSwitches++;
                 KiSwapContext(APC_LEVEL, OldThread);
+            }
 
             /* Go back to DISPATCH_LEVEL */
             KeLowerIrql(DISPATCH_LEVEL);
@@ -322,6 +325,7 @@ KiIdleLoop(VOID)
             NewThread->State = Running;
 
             /* Switch away from the idle thread */
+            KiSchedulerCpuData[Prcb->Number].IdleSwitches++;
             KiSwapContext(APC_LEVEL, OldThread);
         }
 #endif
@@ -625,6 +629,7 @@ KiDispatchInterrupt(VOID)
         KxQueueReadyThread(OldThread, Prcb);
 
         /* Swap to the new thread */
+        KiSchedulerCpuData[Prcb->Number].PreemptSwitches++;
         KiSwapContext(APC_LEVEL, OldThread);
     }
 }

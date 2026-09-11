@@ -97,6 +97,11 @@ typedef struct DECLSPEC_CACHEALIGN _KI_SCHEDULER_CPU_DATA
     volatile ULONG DispatcherLockAcquires;
     volatile ULONG DispatcherLockContentions;
     volatile ULONG DispatcherLockHandoffs;
+    volatile ULONG WaitSwitches;
+    volatile ULONG QuantumEndSwitches;
+    volatile ULONG YieldSwitches;
+    volatile ULONG PreemptSwitches;
+    volatile ULONG IdleSwitches;
 } KI_SCHEDULER_CPU_DATA, *PKI_SCHEDULER_CPU_DATA;
 
 C_ASSERT((sizeof(KI_SCHEDULER_CPU_DATA) % SYSTEM_CACHE_ALIGNMENT_SIZE) == 0);
