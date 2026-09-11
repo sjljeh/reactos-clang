@@ -284,6 +284,27 @@ KiIdleLoop(VOID)
         }
 
         /* Check if a new thread is scheduled for execution */
+#ifdef CONFIG_SMP
+        if (Prcb->NextThread || Prcb->IdleSchedule)
+        {
+            /* Enable interrupts */
+            _enable();
+
+            /* Do the swap at SYNCH_LEVEL */
+            KfRaiseIrql(SYNCH_LEVEL);
+
+            /* Select and commit work while holding the PRCB lock. */
+            OldThread = Prcb->IdleThread;
+            NewThread = KiIdleSchedule(Prcb);
+
+            /* Switch away from the idle thread */
+            if (NewThread)
+                KiSwapContext(APC_LEVEL, OldThread);
+
+            /* Go back to DISPATCH_LEVEL */
+            KeLowerIrql(DISPATCH_LEVEL);
+        }
+#else
         if (Prcb->NextThread)
         {
             /* Enable interrupts */
@@ -300,25 +321,10 @@ KiIdleLoop(VOID)
             /* The thread is now running */
             NewThread->State = Running;
 
-#ifdef CONFIG_SMP
-            /* This processor has accepted runnable work. */
-            InterlockedBitTestAndResetAffinity(&KiIdleSummary, Prcb->Number);
-            Prcb->IdleSchedule = FALSE;
-#endif
-
-#ifdef CONFIG_SMP
-            /* Do the swap at SYNCH_LEVEL */
-            KfRaiseIrql(SYNCH_LEVEL);
-#endif
-
             /* Switch away from the idle thread */
             KiSwapContext(APC_LEVEL, OldThread);
-
-#ifdef CONFIG_SMP
-            /* Go back to DISPATCH_LEVEL */
-            KeLowerIrql(DISPATCH_LEVEL);
-#endif
         }
+#endif
         else
         {
             /* Continue staying idle. Note the HAL returns with interrupts on */
@@ -405,6 +411,11 @@ KiSwapContextExit(IN PKTHREAD OldThread,
                      0);
     }
 
+#ifdef CONFIG_SMP
+    /* The outgoing processor no longer uses the old thread's stack. */
+    OldThread->SwapBusy = FALSE;
+#endif
+
     /* Kernel APCs may be pending */
     if (NewThread->ApcState.KernelApcPending)
     {
@@ -449,11 +460,17 @@ KiSwapContextEntry(IN PKSWITCHFRAME SwitchFrame,
     OldThread = (PKTHREAD)(OldThreadAndApcFlag & ~3);
     NewThread = Pcr->PrcbData.CurrentThread;
 
+#ifdef CONFIG_SMP
+    /* Wait until the processor switching this thread out has left its stack. */
+    while (NewThread->SwapBusy)
+    {
+        YieldProcessor();
+        KeMemoryBarrierWithoutFence();
+    }
+#endif
+
     /* Get the old thread and set its kernel stack */
     OldThread->KernelStack = SwitchFrame;
-
-    /* Set swapbusy to false for the new thread */
-    NewThread->SwapBusy = FALSE;
 
     /* ISRs can change FPU state, so disable interrupts while checking */
     _disable();
@@ -517,6 +534,27 @@ KiDispatchInterrupt(VOID)
         OldThread = Prcb->CurrentThread;
         NewThread = Prcb->NextThread;
 
+        /* The selection may have changed before the lock was acquired. */
+        if (!NewThread)
+        {
+            KiReleasePrcbLock(Prcb);
+            return;
+        }
+
+#ifdef CONFIG_SMP
+        /* Ignore a stale request to switch to the running thread. */
+        if (NewThread == OldThread)
+        {
+            Prcb->NextThread = NULL;
+            NewThread->State = Running;
+            KiReleasePrcbLock(Prcb);
+            return;
+        }
+
+        /* Protect the outgoing thread's stack during the switch. */
+        KiSetThreadSwapBusy(OldThread);
+#endif
+
         /* Set new thread data */
         Prcb->NextThread = NULL;
         Prcb->CurrentThread = NewThread;
@@ -526,9 +564,16 @@ KiDispatchInterrupt(VOID)
         OldThread->WaitReason = WrDispatchInt;
 
 #ifdef CONFIG_SMP
-        /* Do not advertise a processor with a standby thread as idle. */
-        InterlockedBitTestAndResetAffinity(&KiIdleSummary, Prcb->Number);
-        Prcb->IdleSchedule = FALSE;
+        if (NewThread == Prcb->IdleThread)
+        {
+            InterlockedBitTestAndSetAffinity(&KiIdleSummary, Prcb->Number);
+            Prcb->IdleSchedule = TRUE;
+        }
+        else
+        {
+            InterlockedBitTestAndResetAffinity(&KiIdleSummary, Prcb->Number);
+            Prcb->IdleSchedule = FALSE;
+        }
 #endif
 
         /* Make the old thread ready */

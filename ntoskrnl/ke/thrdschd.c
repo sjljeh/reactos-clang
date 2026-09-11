@@ -35,9 +35,60 @@ PKTHREAD
 FASTCALL
 KiIdleSchedule(IN PKPRCB Prcb)
 {
-    /* FIXME: TODO */
-    ASSERTMSG("SMP: Not yet implemented\n", FALSE);
-    return NULL;
+    PKTHREAD IdleThread, Thread;
+
+    ASSERT(Prcb == KeGetCurrentPrcb());
+    ASSERT(KeGetCurrentIrql() >= SYNCH_LEVEL);
+
+    /* Serialize against processors assigning work to this PRCB. */
+    KiAcquirePrcbLock(Prcb);
+    IdleThread = Prcb->IdleThread;
+    ASSERT(Prcb->CurrentThread == IdleThread);
+
+    /* Prefer a thread already selected by a remote processor. */
+    Thread = Prcb->NextThread;
+    if (Thread)
+    {
+        Prcb->NextThread = NULL;
+
+        /* A stale self-selection does not require a context switch. */
+        if (Thread == IdleThread)
+        {
+            Thread->State = Running;
+            Thread = NULL;
+        }
+    }
+
+    /* Otherwise, consume work queued on this processor. */
+    if (!Thread)
+        Thread = KiSelectReadyThread(0, Prcb);
+
+    if (Thread == IdleThread)
+    {
+        Thread->State = Running;
+        Thread = NULL;
+    }
+
+    if (Thread)
+    {
+        /* Protect the idle stack until it is resumed on this processor. */
+        KiSetThreadSwapBusy(IdleThread);
+
+        /* Commit the selected thread before dropping the PRCB lock. */
+        Prcb->CurrentThread = Thread;
+        Thread->State = Running;
+        InterlockedAndSetMember(&KiIdleSummary, ~Prcb->SetMember);
+    }
+    else
+    {
+        /* There is no runnable work; continue to advertise this CPU. */
+        InterlockedOrSetMember(&KiIdleSummary, Prcb->SetMember);
+    }
+
+    /* One scheduling pass is complete; new work will set NextThread. */
+    Prcb->IdleSchedule = FALSE;
+    KiReleasePrcbLock(Prcb);
+    return Thread;
 }
 
 VOID
@@ -494,6 +545,9 @@ KiSwapThread(IN PKTHREAD CurrentThread,
         {
             /* Set the idle summary */
             InterlockedOrSetMember(&KiIdleSummary, Prcb->SetMember);
+#ifdef CONFIG_SMP
+            Prcb->IdleSchedule = TRUE;
+#endif
 
             /* Schedule the idle thread */
             NextThread = Prcb->IdleThread;
@@ -509,8 +563,25 @@ KiSwapThread(IN PKTHREAD CurrentThread,
     /* Save the wait IRQL */
     WaitIrql = CurrentThread->WaitIrql;
 
-    /* Swap contexts */
-    ApcState = KiSwapContext(WaitIrql, CurrentThread);
+#ifdef CONFIG_SMP
+    /* An unwait can make the selected thread be the current thread. */
+    if (NextThread == CurrentThread)
+    {
+        CurrentThread->SwapBusy = FALSE;
+
+        if (CurrentThread->ApcState.KernelApcPending &&
+            !CurrentThread->SpecialApcDisable &&
+            (WaitIrql == PASSIVE_LEVEL))
+        {
+            ApcState = TRUE;
+        }
+    }
+    else
+#endif
+    {
+        /* Swap contexts */
+        ApcState = KiSwapContext(WaitIrql, CurrentThread);
+    }
 
     /* Get the wait status */
     WaitStatus = CurrentThread->WaitStatus;
