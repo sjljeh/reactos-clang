@@ -1578,25 +1578,24 @@ IntBeginPaint(PWND Window, PPAINTSTRUCT Ps)
    return Ps->hdc;
 }
 
+static VOID
+IntCompletePaintState(PWND Wnd)
+{
+   if (Wnd->state2 & WNDS2_ENDPAINTINVALIDATE)
+      ERR("EP: Another thread invalidated this window\n");
+
+   InterlockedAnd((PLONG)&Wnd->state2,
+                  ~(WNDS2_ENDPAINTINVALIDATE |
+                    WNDS2_WMPAINTSENT |
+                    WNDS2_STARTPAINT));
+}
+
 BOOL FASTCALL
 IntEndPaint(PWND Wnd, PPAINTSTRUCT Ps)
 {
-   HDC hdc = NULL;
-
-   hdc = Ps->hdc;
-
-   UserReleaseDC(Wnd, hdc, TRUE);
-
-   if (Wnd->state2 & WNDS2_ENDPAINTINVALIDATE)
-   {
-      ERR("EP: Another thread invalidated this window\n");
-      Wnd->state2 &= ~WNDS2_ENDPAINTINVALIDATE;
-   }
-
-   Wnd->state2 &= ~(WNDS2_WMPAINTSENT|WNDS2_STARTPAINT);
-
+   UserReleaseDC(Wnd, Ps->hdc, TRUE);
+   IntCompletePaintState(Wnd);
    co_UserShowCaret(Wnd);
-
    return TRUE;
 }
 
@@ -1737,9 +1736,12 @@ NtUserEndPaint(HWND hWnd, CONST PAINTSTRUCT* pUnsafePs)
 {
    NTSTATUS Status = STATUS_SUCCESS;
    PWND Window;
+   PTHREADINFO pti;
    PAINTSTRUCT Ps;
    USER_REFERENCE_ENTRY Ref;
    BOOL Ret = FALSE;
+   BOOL ShowCaret;
+   BOOL Destroying;
 
    _SEH2_TRY
    {
@@ -1758,7 +1760,7 @@ NtUserEndPaint(HWND hWnd, CONST PAINTSTRUCT* pUnsafePs)
    }
 
    TRACE("Enter NtUserEndPaint\n");
-   UserEnterExclusive();
+   UserEnterShared();
 
    if (!(Window = UserGetWindowObject(hWnd)))
    {
@@ -1767,11 +1769,41 @@ NtUserEndPaint(HWND hWnd, CONST PAINTSTRUCT* pUnsafePs)
 
    UserRefObjectCo(Window, &Ref);
 
-   Ret = IntEndPaint(Window, &Ps);
+   /* DCE teardown has its own lock and the reference keeps the window alive.
+    * Reacquire USER shared only to commit the window paint flags. */
+   UserLeave();
+   UserReleaseDC(Window, Ps.hdc, TRUE);
+   UserEnterShared();
+   IntCompletePaintState(Window);
+   Ret = TRUE;
+
+   pti = PsGetCurrentThreadWin32Thread();
+   ShowCaret = (pti &&
+                pti->MessageQueue &&
+                Window->head.pti->pEThread == PsGetCurrentThread() &&
+                pti->MessageQueue->CaretInfo.hWnd == hWnd &&
+                !pti->MessageQueue->CaretInfo.Visible);
+   Destroying = UserObjectInDestroy(hWnd);
+   if (!ShowCaret && !Destroying)
+   {
+      UserDerefObjectCo(Window);
+      UserLeave();
+      TRACE("Leave NtUserEndPaint, ret=%i\n", Ret);
+      return Ret;
+   }
+
+   /* Reenter exclusively only for a required per-queue caret transition. */
+   UserLeave();
+   UserEnterExclusive();
+   if (ShowCaret)
+      co_UserShowCaret(Window);
+   UserDerefObjectCo(Window);
+   UserLeave();
+
+   TRACE("Leave NtUserEndPaint, ret=%i\n", Ret);
+   return Ret;
 
 Cleanup:
-   if (Window) UserDerefObjectCo(Window);
-
    TRACE("Leave NtUserEndPaint, ret=%i\n", Ret);
    UserLeave();
    return Ret;
