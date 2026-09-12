@@ -47,8 +47,7 @@ HalpPrintApicTables(VOID);
 
 VOID
 FASTCALL
-HalpSendClockIpi(
-    _In_ KAFFINITY TargetSet,
+HalpBroadcastClockIpi(
     _In_ UCHAR Vector);
 
 /* APIC specific functions inside apic/apicsmp.c */

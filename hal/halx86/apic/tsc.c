@@ -121,9 +121,6 @@ HalpCalibrateStallExecution(VOID)
 
     HalpInitializeTsc();
 
-    /* Calibrate the BSP local APIC timer against the now-calibrated TSC. */
-    ApicCalibrateTimer();
-
     KeGetPcr()->StallScaleFactor = (ULONG)(HalpCpuClockFrequency.QuadPart / 1000000);
 }
 
