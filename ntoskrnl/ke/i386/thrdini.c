@@ -58,21 +58,6 @@ KiRetireDpcListInDpcStack(
 
 /* FUNCTIONS *****************************************************************/
 
-#ifdef CONFIG_SMP
-#define KI_IDLE_SPIN_COUNT 10000
-
-static FORCEINLINE BOOLEAN
-KiIdleWorkPending(
-    _In_ PKPRCB Prcb)
-{
-    return (Prcb->NextThread ||
-            Prcb->IdleSchedule ||
-            Prcb->DpcData[0].DpcQueueDepth ||
-            Prcb->TimerRequest ||
-            Prcb->DeferredReadyListHead.Next);
-}
-#endif
-
 VOID
 NTAPI
 KiThreadStartup(VOID)
@@ -276,13 +261,6 @@ KiIdleLoop(VOID)
 {
     PKPRCB Prcb = KeGetCurrentPrcb();
     PKTHREAD OldThread, NewThread;
-#ifdef CONFIG_SMP
-    PKI_SCHEDULER_CPU_DATA SchedulerData;
-    ULONG SpinCount, LastIdleSwitches, CurrentTick, IdleInterval;
-
-    SchedulerData = &KiSchedulerCpuData[Prcb->Number];
-    LastIdleSwitches = SchedulerData->IdleSwitches;
-#endif
 
     /* Now loop forever */
     while (TRUE)
@@ -353,60 +331,6 @@ KiIdleLoop(VOID)
 #endif
         else
         {
-#ifdef CONFIG_SMP
-            /*
-             * ULE avoids entering a power state immediately on processors
-             * which are switching in and out of idle. This matters even more
-             * to a VM: halting and remotely waking a vCPU requires host
-             * scheduling transitions and an IPI VM exit.
-             *
-             * Spin only once per return to the idle thread, only when the
-             * preceding idle residency lasted at most one clock tick, and not
-             * when the PRCB identifies sibling logical processors which should
-             * be allowed to use the physical core instead.
-             */
-            if (SchedulerData->IdleSwitches != LastIdleSwitches)
-            {
-                LastIdleSwitches = SchedulerData->IdleSwitches;
-                CurrentTick = KeTickCount.LowPart;
-                IdleInterval = CurrentTick - SchedulerData->IdleLastTransitionTick;
-                SchedulerData->IdleLastTransitionTick = CurrentTick;
-
-                if ((IdleInterval <= 1) &&
-                    (Prcb->MultiThreadProcessorSet == Prcb->SetMember))
-                {
-                    SchedulerData->IdleSpinAttempts++;
-
-                    InterlockedOr((PLONG)&KiIdleSpinSummary,
-                                  (LONG)Prcb->SetMember);
-                    KeMemoryBarrier();
-
-                    _enable();
-                    for (SpinCount = 0;
-                         SpinCount < KI_IDLE_SPIN_COUNT;
-                         SpinCount++)
-                    {
-                        if (KiIdleWorkPending(Prcb)) break;
-                        YieldProcessor();
-                        KeMemoryBarrierWithoutFence();
-                    }
-                    _disable();
-
-                    InterlockedAnd((PLONG)&KiIdleSpinSummary,
-                                   (LONG)~Prcb->SetMember);
-                    KeMemoryBarrier();
-
-                    /* Close the race with a remote publisher which skipped IPI. */
-                    if (KiIdleWorkPending(Prcb))
-                    {
-                        SchedulerData->IdleSpinHits++;
-                        continue;
-                    }
-                }
-            }
-
-            SchedulerData->IdleHaltCalls++;
-#endif
             /* Continue staying idle. Note the HAL returns with interrupts on */
             Prcb->PowerState.IdleFunction(&Prcb->PowerState);
         }

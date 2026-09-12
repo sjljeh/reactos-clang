@@ -194,13 +194,6 @@ KiInsertDeferredReadyList(IN PKTHREAD Thread)
 
 FORCEINLINE
 VOID
-KiRequestSchedulerInterrupt(IN ULONG Cpu)
-{
-    UNREFERENCED_PARAMETER(Cpu);
-}
-
-FORCEINLINE
-VOID
 KiRescheduleThread(IN BOOLEAN NewThread,
                    IN ULONG Cpu)
 {
@@ -430,27 +423,6 @@ KiInsertDeferredReadyList(IN PKTHREAD Thread)
 
 FORCEINLINE
 VOID
-KiRequestSchedulerInterrupt(IN ULONG Cpu)
-{
-    KAFFINITY ProcessorMask = AFFINITY_MASK(Cpu);
-
-    /*
-     * A spinning idle processor polls its PRCB. Avoid forcing an IPI VM exit,
-     * but order the published scheduler state before observing its spin bit.
-     */
-    KeMemoryBarrier();
-    if (KiIdleSpinSummary & ProcessorMask)
-    {
-        InterlockedIncrement(
-            (PLONG)&KiSchedulerCpuData[KeGetCurrentProcessorNumber()].IdleSpinIpiAvoided);
-        return;
-    }
-
-    KiIpiSend(ProcessorMask, IPI_DPC);
-}
-
-FORCEINLINE
-VOID
 KiRescheduleThread(IN BOOLEAN NewThread,
                    IN ULONG Cpu)
 {
@@ -458,7 +430,7 @@ KiRescheduleThread(IN BOOLEAN NewThread,
     if ((NewThread) && !(KeGetCurrentPrcb()->Number == Cpu))
     {
         /* Send an IPI to request delivery */
-        KiRequestSchedulerInterrupt(Cpu);
+        KiIpiSend(AFFINITY_MASK(Cpu), IPI_DPC);
     }
 }
 

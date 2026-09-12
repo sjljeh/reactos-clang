@@ -103,11 +103,6 @@ typedef struct DECLSPEC_CACHEALIGN _KI_SCHEDULER_CPU_DATA
     volatile ULONG YieldSwitches;
     volatile ULONG PreemptSwitches;
     volatile ULONG IdleSwitches;
-    volatile ULONG IdleSpinAttempts;
-    volatile ULONG IdleSpinHits;
-    volatile ULONG IdleHaltCalls;
-    volatile ULONG IdleSpinIpiAvoided;
-    volatile ULONG IdleLastTransitionTick;
 } KI_SCHEDULER_CPU_DATA, *PKI_SCHEDULER_CPU_DATA;
 
 C_ASSERT((sizeof(KI_SCHEDULER_CPU_DATA) % SYSTEM_CACHE_ALIGNMENT_SIZE) == 0);
@@ -180,7 +175,6 @@ extern LIST_ENTRY KiProcessInSwapListHead, KiProcessOutSwapListHead;
 extern LIST_ENTRY KiStackInSwapListHead;
 extern KEVENT KiSwapEvent;
 extern KAFFINITY KiIdleSummary;
-extern volatile KAFFINITY KiIdleSpinSummary;
 extern KI_SCHEDULER_CPU_DATA KiSchedulerCpuData[MAXIMUM_PROCESSORS];
 extern PVOID KeUserApcDispatcher;
 extern PVOID KeUserCallbackDispatcher;
