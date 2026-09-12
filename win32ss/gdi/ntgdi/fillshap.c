@@ -520,19 +520,16 @@ NtGdiPolyPolyDraw( IN HDC hDC,
         return FALSE;
     }
 
-    DC_vPrepareDCsForBlit(dc, NULL, NULL, NULL);
-
-    if (dc->pdcattr->ulDirty_ & (DIRTY_FILL | DC_BRUSH_DIRTY))
-        DC_vUpdateFillBrush(dc);
-
-    if (dc->pdcattr->ulDirty_ & (DIRTY_LINE | DC_PEN_DIRTY))
-        DC_vUpdateLineBrush(dc);
-
     /* Perform the actual work */
     switch (iFunc)
     {
         case GdiPolyPolygon:
+            /* Polygon is the only worker here that expects its caller to
+             * bracket direct-surface access. The line and Bezier workers
+             * prepare their own draw interval. */
+            DC_vPrepareDCsForBlit(dc, NULL, NULL, NULL);
             Ret = IntGdiPolyPolygon(dc, SafePoints, SafeCounts, Count);
+            DC_vFinishBlit(dc, NULL);
             break;
         case GdiPolyPolyLine:
             Ret = IntGdiPolyPolyline(dc, SafePoints, SafeCounts, Count);
@@ -563,7 +560,6 @@ NtGdiPolyPolyDraw( IN HDC hDC,
     }
 
     /* Cleanup and return */
-    DC_vFinishBlit(dc, NULL);
     DC_UnlockDc(dc);
     ExFreePoolWithTag(pTemp, TAG_SHAPE);
 
