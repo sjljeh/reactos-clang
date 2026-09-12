@@ -27,6 +27,7 @@ static ULONG HalpMinimumTimeIncrement;
 static ULONG HalpMaximumTimeIncrement;
 static ULONG HalpCurrentFractionalIncrement;
 static ULONG HalpRunningFraction;
+static ULONG HalpRuntimeClockAccumulator;
 static BOOLEAN HalpSetClockRate;
 static UCHAR HalpNextClockRate;
 
@@ -186,8 +187,22 @@ HalpClockInterruptHandler(IN PKTRAP_FRAME TrapFrame)
         HalpSetClockRate = FALSE;
     }
 
-    /* Send the clock IPI to all other CPUs */
-    HalpBroadcastClockIpi(CLOCK_IPI_VECTOR);
+    /*
+     * KeUpdateSystemTime charges processor runtime only when the variable-rate
+     * RTC has accumulated one maximum (base) clock tick.  Keep the AP clocks
+     * on that same cadence.  Broadcasting every sub-tick makes AP quantums and
+     * DPC accounting run up to sixteen times faster when a caller requests the
+     * minimum timer resolution.
+     */
+    if (!KeGetCurrentPrcb()->SkipTick)
+    {
+        HalpRuntimeClockAccumulator += LastIncrement;
+        if (HalpRuntimeClockAccumulator >= HalpMaximumTimeIncrement)
+        {
+            HalpRuntimeClockAccumulator -= HalpMaximumTimeIncrement;
+            HalpBroadcastClockIpi(CLOCK_IPI_VECTOR);
+        }
+    }
 
     /* Update the system time -- on x86 the kernel will exit this trap  */
     KeUpdateSystemTime(TrapFrame, LastIncrement, Irql);
