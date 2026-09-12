@@ -3625,10 +3625,17 @@ DriverEntry(IN PDRIVER_OBJECT DriverObject,
 
     RegPacket.MiniPortVersion = USB_MINIPORT_VERSION_EHCI;
 
+    /*
+     * EHCI reports active root-port changes through the port-change
+     * interrupt.  Do not also request USBPORT's periodic controller poll:
+     * that path invalidates the root hub unconditionally every 500 ms and
+     * performs endpoint-list work from the timer DPC.  USBPORT still calls
+     * PollController explicitly while the controller is suspended, where it
+     * is needed for wake detection.
+     */
     RegPacket.MiniPortFlags = USB_MINIPORT_FLAGS_INTERRUPT |
                               USB_MINIPORT_FLAGS_MEMORY_IO |
                               USB_MINIPORT_FLAGS_USB2 |
-                              USB_MINIPORT_FLAGS_POLLING |
                               USB_MINIPORT_FLAGS_WAKE_SUPPORT;
 
     RegPacket.MiniPortBusBandwidth = TOTAL_USB20_BUS_BANDWIDTH;
