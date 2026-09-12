@@ -8,6 +8,7 @@
 
 EXTERN _TscCalibrationPhase:BYTE
 EXTERN _TscCalibrationArray:QWORD
+EXTERN _ApicCalibrationArray:DWORD
 EXTERN _HalpSendEOI@0:PROC
 
 PUBLIC _TscCalibrationISR
@@ -30,6 +31,11 @@ _TscCalibrationISR:
     shl ecx, 3
     mov dword ptr _TscCalibrationArray[ecx], eax
     mov dword ptr _TscCalibrationArray[ecx + 4], edx
+
+    /* Record the LAPIC current count on the same RTC edge. */
+    shr ecx, 1
+    mov eax, dword ptr ds:[HEX(FFFE0390)]
+    mov dword ptr _ApicCalibrationArray[ecx], eax
 
     /* Advance phase */
     inc byte ptr ds:[_TscCalibrationPhase]
@@ -55,6 +61,7 @@ _CalibrationISR_Exit:
 
 EXTERN TscCalibrationPhase:BYTE
 EXTERN TscCalibrationArray:DWORD
+EXTERN ApicCalibrationArray:DWORD
 EXTERN HalpSendEOI:PROC
 
 PUBLIC TscCalibrationISR
@@ -80,6 +87,13 @@ FUNC TscCalibrationISR
     lea rbx, [rip+TscCalibrationArray]
     mov dword ptr [rbx + rcx], eax
     mov dword ptr [rbx + rcx + 4], edx
+
+    /* Record the LAPIC current count on the same RTC edge. */
+    shr rcx, 1
+    mov rbx, HEX(FFFFFFFFFFFE0000)
+    mov eax, dword ptr [rbx + HEX(390)]
+    lea rbx, [rip+ApicCalibrationArray]
+    mov dword ptr [rbx + rcx], eax
 
     /* Advance phase */
     inc byte ptr [rip+TscCalibrationPhase]

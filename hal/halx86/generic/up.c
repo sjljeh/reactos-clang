@@ -42,7 +42,8 @@ HalpSetupProcessorsTable(
 
 VOID
 FASTCALL
-HalpBroadcastClockIpi(
+HalpSendClockIpi(
+    _In_ KAFFINITY TargetSet,
     _In_ UCHAR Vector)
 {
     NOTHING;

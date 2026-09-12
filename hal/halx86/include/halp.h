@@ -50,9 +50,10 @@ VOID
 #define HAL_APC_REQUEST         0
 #define HAL_DPC_REQUEST         1
 
-/* HAL profiling offsets in KeGetPcr()->HalReserved[] */
-#define HAL_PROFILING_INTERVAL      0
-#define HAL_PROFILING_MULTIPLIER    1
+/* Local APIC timer state in KeGetPcr()->HalReserved[]. */
+#define HAL_PROFILING_INTERVAL      4
+#define HAL_PROFILING_MULTIPLIER    5
+#define HAL_PROFILING_ACTIVE        6
 
 /* Usage flags */
 #define IDT_REGISTERED          0x01

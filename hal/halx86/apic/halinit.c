@@ -90,11 +90,12 @@ HalpInitProcessor(
     HalpProcessorIdentity[ProcessorNumber].ProcessorStarted = TRUE;
     HalpProcessorIdentity[ProcessorNumber].BSPCheck = (ProcessorNumber == 0);
 
-    /* Initialize profiling data (but don't start it) */
+    /* Initialize profiling state before programming this processor's timer. */
     HalInitializeProfiling();
 
-    /* Initialize the timer */
-    //ApicInitializeTimer(ProcessorNumber);
+    /* APs account their own runtime without a BSP broadcast IPI. */
+    if (ProcessorNumber != 0)
+        ApicInitializeTimer(ProcessorNumber);
 }
 
 VOID

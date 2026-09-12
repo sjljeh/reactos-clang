@@ -3,7 +3,7 @@
  * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
  * PURPOSE:     Core source file for SMP management
  * COPYRIGHT:   Copyright 2021 Victor Perevertkin <victor.perevertkin@reactos.org>
- *              Copyright 2021-2023 Justin Miller <justin.miller@reactos.org>
+ *              Copyright 2021-2023 Justin Miller <justinmiller100@gmail.com>
  */
 
 /* INCLUDES ******************************************************************/
@@ -36,13 +36,12 @@ HalpSetupProcessorsTable(
 
 VOID
 FASTCALL
-HalpBroadcastClockIpi(
+HalpSendClockIpi(
+    _In_ KAFFINITY TargetSet,
     _In_ UCHAR Vector)
 {
-    KAFFINITY TargetSet;
-
-    /* Target only APs published by both the kernel and HAL. */
-    TargetSet = HalpActiveProcessors & KeQueryActiveProcessors() &
-                ~KeGetCurrentPrcb()->SetMember;
-    HalRequestIpiSpecifyVector(TargetSet, Vector);
+    TargetSet &= HalpActiveProcessors & KeQueryActiveProcessors() &
+                 ~KeGetCurrentPrcb()->SetMember;
+    if (TargetSet)
+        HalRequestIpiSpecifyVector(TargetSet, Vector);
 }

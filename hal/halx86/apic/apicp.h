@@ -329,6 +329,14 @@ ApicWrite(APIC_REGISTER Register, ULONG Value)
 
 VOID
 NTAPI
+ApicPrepareTimerCalibration(VOID);
+
+VOID
+NTAPI
+ApicCalibrateTimer(VOID);
+
+VOID
+NTAPI
 ApicInitializeTimer(ULONG Cpu);
 
 VOID

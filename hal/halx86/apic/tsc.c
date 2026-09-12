@@ -19,9 +19,6 @@ LARGE_INTEGER HalpCpuClockFrequency = {{INITIAL_STALL_COUNT * 1000000}};
 UCHAR TscCalibrationPhase;
 ULONG64 TscCalibrationArray[NUM_SAMPLES];
 
-#define RTC_MODE 6 /* Mode 6 is 1024 Hz */
-#define SAMPLE_FREQUENCY ((32768 << 1) >> RTC_MODE)
-
 /* PRIVATE FUNCTIONS *********************************************************/
 
 static
@@ -83,6 +80,9 @@ HalpInitializeTsc(VOID)
     /* Set the calibration ISR */
     KeRegisterInterruptHandler(APIC_CLOCK_VECTOR, TscCalibrationISR);
 
+    /* Sample the BSP LAPIC timer on the same RTC edges as the TSC. */
+    ApicPrepareTimerCalibration();
+
     /* Enable the timer interrupt */
     HalEnableSystemInterrupt(APIC_CLOCK_VECTOR, CLOCK_LEVEL, Latched);
 
@@ -120,6 +120,9 @@ HalpCalibrateStallExecution(VOID)
     // Timer interrupt is now active
 
     HalpInitializeTsc();
+
+    /* Publish the BSP local APIC timer rate sampled on the RTC edges. */
+    ApicCalibrateTimer();
 
     KeGetPcr()->StallScaleFactor = (ULONG)(HalpCpuClockFrequency.QuadPart / 1000000);
 }
