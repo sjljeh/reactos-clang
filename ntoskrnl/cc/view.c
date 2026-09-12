@@ -534,7 +534,7 @@ retry:
     oldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
 
     current_entry = VacbLruListHead.Flink;
-    while (current_entry != &VacbLruListHead)
+    while (current_entry != &VacbLruListHead && Target != 0)
     {
         ULONG Refs;
 
