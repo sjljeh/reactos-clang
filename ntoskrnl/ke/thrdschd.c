@@ -28,6 +28,7 @@
 
 KAFFINITY KiIdleSummary;
 KAFFINITY KiIdleSMTSummary;
+volatile KAFFINITY KiIdleSpinSummary;
 KI_SCHEDULER_CPU_DATA KiSchedulerCpuData[MAXIMUM_PROCESSORS];
 
 /* FUNCTIONS *****************************************************************/
@@ -395,7 +396,7 @@ Exit:
     if (RequestInterrupt &&
         (TargetPrcb->Number != KeGetCurrentProcessorNumber()))
     {
-        KiIpiSend(AFFINITY_MASK(TargetPrcb->Number), IPI_DPC);
+        KiRequestSchedulerInterrupt(TargetPrcb->Number);
     }
 
     return Moved;
@@ -913,7 +914,7 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
             if (KeGetCurrentProcessorNumber() != Thread->NextProcessor)
             {
                 /* We are, send an IPI */
-                KiIpiSend(AFFINITY_MASK(Thread->NextProcessor), IPI_DPC);
+                KiRequestSchedulerInterrupt(Thread->NextProcessor);
             }
             return;
         }
@@ -1281,7 +1282,7 @@ KiSetPriorityThread(IN PKTHREAD Thread,
                         if (KeGetCurrentProcessorNumber() != Processor)
                         {
                             /* We are, send an IPI */
-                            KiIpiSend(AFFINITY_MASK(Processor), IPI_DPC);
+                            KiRequestSchedulerInterrupt(Processor);
                         }
                     }
                 }
@@ -1361,7 +1362,7 @@ KiUpdateEffectiveAffinityThread(
             if (Prcb != KeGetCurrentPrcb())
             {
                 /* It is, send an IPI */
-                KiIpiSend(AFFINITY_MASK(Thread->NextProcessor), IPI_DPC);
+                KiRequestSchedulerInterrupt(Thread->NextProcessor);
             }
         }
         else if (Thread->State == Standby)
