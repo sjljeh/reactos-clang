@@ -41,6 +41,7 @@
 
 LIST_ENTRY DirtyVacbListHead;
 static LIST_ENTRY VacbLruListHead;
+static volatile LONG CcViewInitialized;
 
 NPAGED_LOOKASIDE_LIST iBcbLookasideList;
 static NPAGED_LOOKASIDE_LIST SharedCacheMapLookasideList;
@@ -511,6 +512,19 @@ CcRosTrimCache(
     BOOLEAN FlushedPages = FALSE;
 
     DPRINT("CcRosTrimCache(Target %lu)\n", Target);
+
+    /*
+     * Mm starts its balance thread before phase-one cache-manager
+     * initialization.  On MP systems that thread can run immediately and ask
+     * us to trim while the global VACB list is still zero-filled.  Publish the
+     * list initialization explicitly instead of treating a NULL Flink as a
+     * list entry at DISPATCH_LEVEL.
+     */
+    if (!InterlockedCompareExchange(&CcViewInitialized, 0, 0))
+    {
+        *NrFreed = 0;
+        return;
+    }
 
     InitializeListHead(&FreeList);
 
@@ -1595,6 +1609,9 @@ CcInitView (
                                     sizeof(ROS_VACB),
                                     TAG_VACB,
                                     20);
+
+    /* The interlocked publication also orders all list and lookaside setup. */
+    InterlockedExchange(&CcViewInitialized, 1);
 
     CcInitCacheZeroPage();
 }
