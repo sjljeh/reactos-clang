@@ -225,12 +225,12 @@ static BOOL             g_RenderingEnabled = TRUE;
 #define FREETYPE_LOCK_SPIN_COUNT 4000
 
 static __inline VOID
-IntLockFreeTypeImpl(VOID)
+IntLockFreeTypeMutex(
+    _Inout_ PFAST_MUTEX Lock)
 {
     PKTHREAD Thread = KeGetCurrentThread();
     ULONG SpinCount;
 
-    ASSERT_FREETYPE_LOCK_NOT_HELD();
     KeEnterCriticalRegion();
 
     /* Most font-engine operations are short. Avoid turning simultaneous GUI
@@ -240,9 +240,9 @@ IntLockFreeTypeImpl(VOID)
     {
         for (SpinCount = 0; SpinCount < FREETYPE_LOCK_SPIN_COUNT; SpinCount++)
         {
-            if (InterlockedCompareExchange(&g_FreeTypeLock->Count, 0, 1) == 1)
+            if (InterlockedCompareExchange(&Lock->Count, 0, 1) == 1)
             {
-                g_FreeTypeLock->Owner = Thread;
+                Lock->Owner = Thread;
                 return;
             }
 
@@ -250,7 +250,22 @@ IntLockFreeTypeImpl(VOID)
         }
     }
 
-    ExAcquireFastMutexUnsafe(g_FreeTypeLock);
+    ExAcquireFastMutexUnsafe(Lock);
+}
+
+static __inline VOID
+IntUnlockFreeTypeMutex(
+    _Inout_ PFAST_MUTEX Lock)
+{
+    ASSERT(Lock->Owner == KeGetCurrentThread());
+    ExReleaseFastMutexUnsafeAndLeaveCriticalRegion(Lock);
+}
+
+static __inline VOID
+IntLockFreeTypeImpl(VOID)
+{
+    ASSERT_FREETYPE_LOCK_NOT_HELD();
+    IntLockFreeTypeMutex(g_FreeTypeLock);
 }
 
 #define IntLockFreeType() IntLockFreeTypeImpl()
@@ -258,7 +273,7 @@ IntLockFreeTypeImpl(VOID)
 #define IntUnLockFreeType() \
 do { \
     ASSERT_FREETYPE_LOCK_HELD(); \
-    ExReleaseFastMutexUnsafeAndLeaveCriticalRegion(g_FreeTypeLock); \
+    IntUnlockFreeTypeMutex(g_FreeTypeLock); \
 } while(0)
 
 #define MAX_FONT_CACHE 256
@@ -440,15 +455,39 @@ SharedFaceCache_Init(PSHARED_FACE_CACHE Cache)
     Cache->OutlineRequiredSize = 0;
     RtlInitUnicodeString(&Cache->FontFamily, NULL);
     RtlInitUnicodeString(&Cache->FullName, NULL);
+    RtlInitUnicodeString(&Cache->StyleName, NULL);
+    RtlInitUnicodeString(&Cache->UniqueName, NULL);
 }
 
 static PSHARED_FACE
 SharedFace_Create(FT_Face Face, PSHARED_MEM Memory)
 {
     PSHARED_FACE Ptr;
+    ULONG i;
+
     Ptr = ExAllocatePoolWithTag(PagedPool, sizeof(SHARED_FACE), TAG_FONT);
     if (Ptr)
     {
+        Ptr->WorkerCount = KeNumberProcessors;
+        if (Ptr->WorkerCount == 0)
+            Ptr->WorkerCount = 1;
+        if (Ptr->WorkerCount > MAXIMUM_PROCESSORS)
+            Ptr->WorkerCount = MAXIMUM_PROCESSORS;
+
+        Ptr->Workers = ExAllocatePoolWithTag(NonPagedPool,
+                                             Ptr->WorkerCount * sizeof(*Ptr->Workers),
+                                             TAG_INTERNAL_SYNC);
+        if (!Ptr->Workers)
+        {
+            ExFreePoolWithTag(Ptr, TAG_FONT);
+            return NULL;
+        }
+
+        RtlZeroMemory(Ptr->Workers,
+                      Ptr->WorkerCount * sizeof(*Ptr->Workers));
+        for (i = 0; i < Ptr->WorkerCount; i++)
+            ExInitializeFastMutex(&Ptr->Workers[i].Lock);
+
         Ptr->Face = Face;
         Ptr->RefCount = 1;
         Ptr->Memory = Memory;
@@ -544,11 +583,15 @@ SharedFaceCache_Release(PSHARED_FACE_CACHE Cache)
 {
     RtlFreeUnicodeString(&Cache->FontFamily);
     RtlFreeUnicodeString(&Cache->FullName);
+    RtlFreeUnicodeString(&Cache->StyleName);
+    RtlFreeUnicodeString(&Cache->UniqueName);
 }
 
 static void
 SharedFace_Release(PSHARED_FACE Ptr, BOOL bDoLock)
 {
+    ULONG i;
+
     if (bDoLock)
         IntLockFreeType();
     else
@@ -565,9 +608,17 @@ SharedFace_Release(PSHARED_FACE Ptr, BOOL bDoLock)
         DPRINT("Releasing SharedFace for %s\n", Ptr->Face->family_name ? Ptr->Face->family_name : "<NULL>");
         RemoveCacheEntries(Ptr->Face);
         FT_Done_Face(Ptr->Face);
+        for (i = 0; i < Ptr->WorkerCount; i++)
+        {
+            IntLockFreeTypeMutex(&Ptr->Workers[i].Lock);
+            if (Ptr->Workers[i].Face)
+                FT_Done_Face(Ptr->Workers[i].Face);
+            IntUnlockFreeTypeMutex(&Ptr->Workers[i].Lock);
+        }
         SharedMem_Release(Ptr->Memory);
         SharedFaceCache_Release(&Ptr->EnglishUS);
         SharedFaceCache_Release(&Ptr->UserLanguage);
+        ExFreePoolWithTag(Ptr->Workers, TAG_INTERNAL_SYNC);
         ExFreePoolWithTag(Ptr, TAG_FONT);
     }
 
@@ -1634,6 +1685,70 @@ static FT_Encoding pick_charmap( FT_Face face, int charset )
     return *encs;
 }
 
+/* FreeType permits one library to serve multiple threads when face creation
+ * and destruction are serialized and an individual face is used by only one
+ * thread at a time. Use processor-selected auxiliary faces for stateless
+ * queries so they do not join the global font-list mutex convoy. */
+static FT_Face
+SharedFace_LockWorker(
+    _Inout_ PSHARED_FACE SharedFace,
+    _Out_ PSHARED_FACE_WORKER *WorkerOut)
+{
+    ULONG Index;
+    FT_Error Error;
+    FT_Face Face;
+    PSHARED_FACE_WORKER Worker;
+
+    ASSERT_FREETYPE_LOCK_NOT_HELD();
+    Index = KeGetCurrentProcessorNumber() % SharedFace->WorkerCount;
+    Worker = &SharedFace->Workers[Index];
+
+    if (InterlockedCompareExchangePointer((PVOID volatile *)&Worker->Face,
+                                          NULL,
+                                          NULL) == NULL)
+    {
+        /* Keep the library/worker order identical to face destruction. */
+        IntLockFreeType();
+        IntLockFreeTypeMutex(&Worker->Lock);
+        if (!Worker->Face)
+        {
+            Face = NULL;
+            Error = FT_New_Memory_Face(g_FreeTypeLibrary,
+                                       SharedFace->Memory->Buffer,
+                                       SharedFace->Memory->BufferSize,
+                                       SharedFace->Face->face_index,
+                                       &Face);
+            if (!Error)
+            {
+                pick_charmap(Face, DEFAULT_CHARSET);
+                InterlockedExchangePointer((PVOID volatile *)&Worker->Face,
+                                           Face);
+            }
+        }
+        IntUnLockFreeType();
+    }
+    else
+    {
+        IntLockFreeTypeMutex(&Worker->Lock);
+    }
+
+    if (!Worker->Face)
+    {
+        IntUnlockFreeTypeMutex(&Worker->Lock);
+        return NULL;
+    }
+
+    *WorkerOut = Worker;
+    return Worker->Face;
+}
+
+static __inline VOID
+SharedFace_UnlockWorker(
+    _Inout_ PSHARED_FACE_WORKER Worker)
+{
+    IntUnlockFreeTypeMutex(&Worker->Lock);
+}
+
 static INT FASTCALL
 IntGdiLoadFontsFromMemory(PGDI_LOAD_FONT pLoadFont,
                           PSHARED_FACE SharedFace, FT_Long FontIndex, INT CharSetIndex)
@@ -1996,15 +2111,16 @@ IntGdiLoadFontByIndexFromMemory(PGDI_LOAD_FONT pLoadFont, FT_Long FontIndex)
     pLoadFont->IsTrueType = FT_IS_SFNT(Face);
     num_faces = Face->num_faces;
     SharedFace = SharedFace_Create(Face, pLoadFont->Memory);
-
-    IntUnLockFreeType();
-
     if (!SharedFace)
     {
+        FT_Done_Face(Face);
+        IntUnLockFreeType();
         DPRINT1("SharedFace_Create failed\n");
         EngSetLastError(ERROR_NOT_ENOUGH_MEMORY);
         return 0; /* Failure */
     }
+
+    IntUnLockFreeType();
 
     if (FontIndex == -1)
     {
@@ -3093,21 +3209,38 @@ typedef struct FONT_NAMES
 static __inline void FASTCALL
 IntInitFontNames(FONT_NAMES *Names, PSHARED_FACE SharedFace)
 {
+    UNICODE_STRING TemporaryName;
+    PSHARED_FACE_CACHE Cache;
     ULONG OtmSize;
 
-    RtlInitUnicodeString(&Names->FamilyNameW, NULL);
-    RtlInitUnicodeString(&Names->FaceNameW, NULL);
-    RtlInitUnicodeString(&Names->StyleNameW, NULL);
-    RtlInitUnicodeString(&Names->FullNameW, NULL);
+    ASSERT_FREETYPE_LOCK_HELD();
 
-    /* family name */
-    IntGetFontLocalizedName(&Names->FamilyNameW, SharedFace, TT_NAME_ID_FONT_FAMILY, gusLanguageID);
-    /* face name */
-    IntGetFontLocalizedName(&Names->FaceNameW, SharedFace, TT_NAME_ID_FULL_NAME, gusLanguageID);
-    /* style name */
-    IntGetFontLocalizedName(&Names->StyleNameW, SharedFace, TT_NAME_ID_FONT_SUBFAMILY, gusLanguageID);
-    /* unique name (full name) */
-    IntGetFontLocalizedName(&Names->FullNameW, SharedFace, TT_NAME_ID_UNIQUE_ID, gusLanguageID);
+    if (PRIMARYLANGID(gusLanguageID) == LANG_ENGLISH)
+        Cache = &SharedFace->EnglishUS;
+    else
+        Cache = &SharedFace->UserLanguage;
+
+#define ENSURE_CACHED_NAME(Field, NameId) \
+    do { \
+        if (!Cache->Field.Buffer) \
+        { \
+            RtlInitUnicodeString(&TemporaryName, NULL); \
+            IntGetFontLocalizedName(&TemporaryName, SharedFace, NameId, gusLanguageID); \
+            RtlFreeUnicodeString(&TemporaryName); \
+        } \
+    } while (0)
+
+    ENSURE_CACHED_NAME(FontFamily, TT_NAME_ID_FONT_FAMILY);
+    ENSURE_CACHED_NAME(FullName, TT_NAME_ID_FULL_NAME);
+    ENSURE_CACHED_NAME(StyleName, TT_NAME_ID_FONT_SUBFAMILY);
+    ENSURE_CACHED_NAME(UniqueName, TT_NAME_ID_UNIQUE_ID);
+
+#undef ENSURE_CACHED_NAME
+
+    Names->FamilyNameW = Cache->FontFamily;
+    Names->FaceNameW = Cache->FullName;
+    Names->StyleNameW = Cache->StyleName;
+    Names->FullNameW = Cache->UniqueName;
 
     /* Calculate the size of OUTLINETEXTMETRICW with extra data */
     OtmSize = sizeof(OUTLINETEXTMETRICW) +
@@ -3148,15 +3281,6 @@ IntStoreFontNames(_In_ const FONT_NAMES *Names, _Out_ OUTLINETEXTMETRICW *Otm)
     pb += IntStoreName(&Names->FullNameW, pb);
 
     return pb;
-}
-
-static __inline void FASTCALL
-IntFreeFontNames(FONT_NAMES *Names)
-{
-    RtlFreeUnicodeString(&Names->FamilyNameW);
-    RtlFreeUnicodeString(&Names->FaceNameW);
-    RtlFreeUnicodeString(&Names->StyleNameW);
-    RtlFreeUnicodeString(&Names->FullNameW);
 }
 
 /*************************************************************
@@ -3210,7 +3334,6 @@ IntGetOutlineTextMetrics(PFONTGDI FontGDI,
     if (Size == 0)
     {
         ASSERT(Otm == NULL);
-        IntFreeFontNames(&FontNames);
         if (!bLocked)
             IntUnLockFreeType();
         return Cache->OutlineRequiredSize;
@@ -3222,7 +3345,6 @@ IntGetOutlineTextMetrics(PFONTGDI FontGDI,
     {
         DPRINT1("Size %u < OutlineRequiredSize %u\n", Size,
                 Cache->OutlineRequiredSize);
-        IntFreeFontNames(&FontNames);
         if (!bLocked)
             IntUnLockFreeType();
         return 0;   /* failure */
@@ -3241,7 +3363,6 @@ IntGetOutlineTextMetrics(PFONTGDI FontGDI,
         if (!bLocked)
             IntUnLockFreeType();
         DPRINT1("Can't find OS/2 table - not TT font?\n");
-        IntFreeFontNames(&FontNames);
         return 0;
     }
 
@@ -3250,7 +3371,6 @@ IntGetOutlineTextMetrics(PFONTGDI FontGDI,
         if (!bLocked)
             IntUnLockFreeType();
         DPRINT1("Can't find HHEA table - not TT font?\n");
-        IntFreeFontNames(&FontNames);
         return 0;
     }
 
@@ -3318,7 +3438,6 @@ skip_os2:
     pb = IntStoreFontNames(&FontNames, Otm);
     ASSERT(pb - (BYTE*)Otm == Cache->OutlineRequiredSize);
 
-    IntFreeFontNames(&FontNames);
 
     return Cache->OutlineRequiredSize;
 }
@@ -3333,6 +3452,7 @@ IntGetFontLocalizedName(PUNICODE_STRING pNameW, PSHARED_FACE SharedFace,
     NTSTATUS Status = STATUS_NOT_FOUND;
     ANSI_STRING AnsiName;
     PSHARED_FACE_CACHE Cache;
+    PUNICODE_STRING CachedName = NULL;
     FT_Face Face = SharedFace->Face;
 
     RtlFreeUnicodeString(pNameW);
@@ -3343,11 +3463,25 @@ IntGetFontLocalizedName(PUNICODE_STRING pNameW, PSHARED_FACE SharedFace,
     else
         Cache = &SharedFace->UserLanguage;
 
+    switch (NameID)
+    {
+        case TT_NAME_ID_FONT_FAMILY:
+            CachedName = &Cache->FontFamily;
+            break;
+        case TT_NAME_ID_FULL_NAME:
+            CachedName = &Cache->FullName;
+            break;
+        case TT_NAME_ID_FONT_SUBFAMILY:
+            CachedName = &Cache->StyleName;
+            break;
+        case TT_NAME_ID_UNIQUE_ID:
+            CachedName = &Cache->UniqueName;
+            break;
+    }
+
     /* use cache if available */
-    if (NameID == TT_NAME_ID_FONT_FAMILY && Cache->FontFamily.Buffer)
-        return IntDuplicateUnicodeString(&Cache->FontFamily, pNameW);
-    if (NameID == TT_NAME_ID_FULL_NAME && Cache->FullName.Buffer)
-        return IntDuplicateUnicodeString(&Cache->FullName, pNameW);
+    if (CachedName && CachedName->Buffer)
+        return IntDuplicateUnicodeString(CachedName, pNameW);
 
     BestIndex = -1;
     BestScore = 0;
@@ -3450,17 +3584,11 @@ IntGetFontLocalizedName(PUNICODE_STRING pNameW, PSHARED_FACE SharedFace,
     if (NT_SUCCESS(Status))
     {
         /* make cache */
-        if (NameID == TT_NAME_ID_FONT_FAMILY)
+        if (CachedName)
         {
             ASSERT_FREETYPE_LOCK_HELD();
-            if (!Cache->FontFamily.Buffer)
-                IntDuplicateUnicodeString(pNameW, &Cache->FontFamily);
-        }
-        else if (NameID == TT_NAME_ID_FULL_NAME)
-        {
-            ASSERT_FREETYPE_LOCK_HELD();
-            if (!Cache->FullName.Buffer)
-                IntDuplicateUnicodeString(pNameW, &Cache->FullName);
+            if (!CachedName->Buffer)
+                IntDuplicateUnicodeString(pNameW, CachedName);
         }
     }
 
@@ -5128,6 +5256,8 @@ ftGdiGetTextCharsetInfo(
     HFONT hFont;
     PTEXTOBJ TextObj;
     PFONTGDI FontGdi;
+    PSHARED_FACE SharedFace;
+    PSHARED_FACE_WORKER Worker;
     FONTSIGNATURE fs;
     TT_OS2 *pOS2;
     FT_Face Face;
@@ -5145,11 +5275,13 @@ ftGdiGetTextCharsetInfo(
         return Ret;
     }
     FontGdi = ObjToGDI(TextObj->Font, FONT);
-    Face = FontGdi->SharedFace->Face;
+    SharedFace = FontGdi->SharedFace;
     TEXTOBJ_UnlockText(TextObj);
 
     memset(&fs, 0, sizeof(FONTSIGNATURE));
-    IntLockFreeType();
+    Face = SharedFace_LockWorker(SharedFace, &Worker);
+    if (!Face)
+        return Ret;
     pOS2 = FT_Get_Sfnt_Table(Face, ft_sfnt_os2);
     if (NULL != pOS2)
     {
@@ -5170,7 +5302,6 @@ ftGdiGetTextCharsetInfo(
         }
     }
     pOS2 = NULL;
-    IntUnLockFreeType();
     DPRINT("Csb 1=%x  0=%x\n", fs.fsCsb[1],fs.fsCsb[0]);
     if (fs.fsCsb[0] == 0)
     { /* Let's see if we can find any interesting cmaps */
@@ -5190,6 +5321,7 @@ ftGdiGetTextCharsetInfo(
             }
         }
     }
+    SharedFace_UnlockWorker(Worker);
     if (lpSig)
     {
         RtlCopyMemory(lpSig, &fs, sizeof(FONTSIGNATURE));
@@ -5234,16 +5366,20 @@ ftGetFontUnicodeRanges(PFONTGDI Font, PGLYPHSET glyphset)
 {
     DWORD size = 0;
     DWORD num_ranges = 0;
-    FT_Face face = Font->SharedFace->Face;
+    PSHARED_FACE_WORKER Worker;
+    FT_Face face;
+
+    face = SharedFace_LockWorker(Font->SharedFace, &Worker);
+    if (!face)
+        return 0;
+    pick_charmap(face, Font->CharSet);
 
     if (face->charmap == NULL)
     {
         DPRINT1("FIXME: No charmap selected! This is a BUG!\n");
+        SharedFace_UnlockWorker(Worker);
         return 0;
     }
-
-    /* Lock FreeType for face lookup */
-    IntLockFreeType();
 
     if (face->charmap->encoding == FT_ENCODING_UNICODE)
     {
@@ -5304,8 +5440,7 @@ ftGetFontUnicodeRanges(PFONTGDI Font, PGLYPHSET glyphset)
     }
 
 Quit:
-    /* Unlock FreeType */
-    IntUnLockFreeType();
+    SharedFace_UnlockWorker(Worker);
 
     return size;
 }
@@ -5405,9 +5540,12 @@ ftGdiGetFontData(
     DWORD Size)
 {
     DWORD Result = GDI_ERROR;
-    FT_Face Face = FontGdi->SharedFace->Face;
+    PSHARED_FACE_WORKER Worker;
+    FT_Face Face;
 
-    IntLockFreeType();
+    Face = SharedFace_LockWorker(FontGdi->SharedFace, &Worker);
+    if (!Face)
+        return GDI_ERROR;
 
     if (FT_IS_SFNT(Face))
     {
@@ -5430,7 +5568,7 @@ ftGdiGetFontData(
             Result = Size;
     }
 
-    IntUnLockFreeType();
+    SharedFace_UnlockWorker(Worker);
 
     return Result;
 }
@@ -7585,29 +7723,26 @@ GreGetCharWidthW(
     return TRUE;
 }
 
-static BOOL IntGetFontDefaultChar(_In_ FT_Face Face, _Out_ PWCHAR pDefChar)
+static BOOL
+IntGetFontDefaultCharLocked(
+    _In_ FT_Face Face,
+    _Out_ PWCHAR pDefChar)
 {
     TT_OS2 *pOS2;
     FT_WinFNT_HeaderRec WinFNT;
     FT_Error error;
 
-    ASSERT_FREETYPE_LOCK_NOT_HELD();
-
     if (FT_IS_SFNT(Face)) // TrueType / OpenType
     {
-        IntLockFreeType();
         pOS2 = FT_Get_Sfnt_Table(Face, FT_SFNT_OS2);
         if (pOS2)
             *pDefChar = pOS2->usDefaultChar;
-        IntUnLockFreeType();
         return !!pOS2;
     }
 
     if (!FT_IS_SCALABLE(Face)) // *.fon / *.fnt
     {
-        IntLockFreeType();
         error = FT_Get_WinFNT_Header(Face, &WinFNT);
-        IntUnLockFreeType();
         if (!error)
             *pDefChar = WinFNT.default_char;
         return !error;
@@ -7643,7 +7778,10 @@ GreGetGlyphIndicesW(
     }
 
     PFONTGDI FontGDI = ObjToGDI(TextObj->Font, FONT);
-    FT_Face Face = FontGDI->SharedFace->Face;
+    PSHARED_FACE SharedFace = FontGDI->SharedFace;
+    PSHARED_FACE_WORKER Worker;
+    BYTE CharSet = FontGDI->CharSet;
+    FT_Face Face = SharedFace->Face;
     TEXTOBJ_UnlockText(TextObj);
 
     if (cwc == 0)
@@ -7656,25 +7794,28 @@ GreGetGlyphIndicesW(
         return GDI_ERROR;
     }
 
+    Face = SharedFace_LockWorker(SharedFace, &Worker);
+    if (!Face)
+        return GDI_ERROR;
+    pick_charmap(Face, CharSet);
+
     // Get default character
     WCHAR DefChar = 0xFFFF;
-    if (!(iMode & GGI_MARK_NONEXISTING_GLYPHS) && IntGetFontDefaultChar(Face, &DefChar))
+    if (!(iMode & GGI_MARK_NONEXISTING_GLYPHS) &&
+        IntGetFontDefaultCharLocked(Face, &DefChar))
     {
-        IntLockFreeType();
         DefChar = get_glyph_index(Face, DefChar); // Convert to glyph index
-        IntUnLockFreeType();
     }
 
     // Get glyph indices
     // NOTE: Windows GetGlyphIndices doesn't support Surrogate Pairs.
-    IntLockFreeType();
     for (INT i = 0; i < cwc; i++)
     {
         pgi[i] = get_glyph_index(Face, pwc[i]);
         if (pgi[i] == 0)
             pgi[i] = DefChar;
     }
-    IntUnLockFreeType();
+    SharedFace_UnlockWorker(Worker);
 
     return cwc;
 }

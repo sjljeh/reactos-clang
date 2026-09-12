@@ -126,12 +126,21 @@ typedef struct _SHARED_FACE_CACHE {
     UINT OutlineRequiredSize;
     UNICODE_STRING FontFamily;
     UNICODE_STRING FullName;
+    UNICODE_STRING StyleName;
+    UNICODE_STRING UniqueName;
 } SHARED_FACE_CACHE, *PSHARED_FACE_CACHE;
+
+typedef struct _SHARED_FACE_WORKER {
+  FT_Face       Face;
+  FAST_MUTEX    Lock;
+} SHARED_FACE_WORKER, *PSHARED_FACE_WORKER;
 
 typedef struct _SHARED_FACE {
   FT_Face       Face;
   LONG          RefCount;
   PSHARED_MEM   Memory;
+  PSHARED_FACE_WORKER Workers;
+  ULONG         WorkerCount;
   SHARED_FACE_CACHE EnglishUS;
   SHARED_FACE_CACHE UserLanguage;
 } SHARED_FACE, *PSHARED_FACE;
