@@ -21,6 +21,7 @@ PUSER_MESSAGE_QUEUE gpqCursor;
 ULONG_PTR gdwMouseMoveExtraInfo = 0;
 DWORD gdwMouseMoveTimeStamp = 0;
 LIST_ENTRY usmList;
+static EX_PUSH_LOCK gPointerGdiLock;
 
 /* FUNCTIONS *****************************************************************/
 
@@ -29,6 +30,8 @@ NTSTATUS
 NTAPI
 MsqInitializeImpl(VOID)
 {
+   ExInitializePushLock(&gPointerGdiLock);
+
    // Setup Post Messages
    pgMessageLookasideList = ExAllocatePoolWithTag(NonPagedPool, sizeof(PAGED_LOOKASIDE_LIST), TAG_USRMSG);
    if (!pgMessageLookasideList)
@@ -55,6 +58,65 @@ MsqInitializeImpl(VOID)
    InitializeListHead(&usmList);
 
    return(STATUS_SUCCESS);
+}
+
+static VOID
+MsqLockPointerGdi(VOID)
+{
+    ASSERT(UserIsEnteredExclusive());
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusive(&gPointerGdiLock);
+}
+
+static VOID
+MsqUnlockPointerGdi(VOID)
+{
+    ExReleasePushLockExclusive(&gPointerGdiLock);
+    KeLeaveCriticalRegion();
+}
+
+static VOID
+MsqMovePointerLocked(
+    _In_ HDC hdc,
+    _In_ LONG x,
+    _In_ LONG y)
+{
+    MsqLockPointerGdi();
+    GreMovePointer(hdc, x, y);
+    MsqUnlockPointerGdi();
+}
+
+static VOID
+MsqMovePointerOutsideUser(
+    _In_ HDC hdc,
+    _In_ LONG x,
+    _In_ LONG y)
+{
+    MsqLockPointerGdi();
+    UserLeave();
+    GreMovePointer(hdc, x, y);
+    MsqUnlockPointerGdi();
+    UserEnterExclusive();
+}
+
+static ULONG
+MsqSetPointerShapeLocked(
+    _In_ HDC hdc,
+    _In_opt_ HBITMAP hbmMask,
+    _In_opt_ HBITMAP hbmColor,
+    _In_ LONG xHot,
+    _In_ LONG yHot,
+    _In_ LONG x,
+    _In_ LONG y,
+    _In_ FLONG fl)
+{
+    ULONG Result;
+
+    MsqLockPointerGdi();
+    Result = GreSetPointerShape(hdc, hbmMask, hbmColor,
+                                xHot, yHot, x, y, fl);
+    MsqUnlockPointerGdi();
+    return Result;
 }
 
 PWND FASTCALL
@@ -141,19 +203,19 @@ UserSetCursor(
                 FIXME("Should animate the cursor, using only the first frame now.\n");
                 CursorFrame = ((PACON)NewCursor)->aspcur[0];
             }
-            GreSetPointerShape(hdcScreen,
-                               CursorFrame->hbmAlpha ? NULL : NewCursor->hbmMask,
-                               CursorFrame->hbmAlpha ? NewCursor->hbmAlpha : NewCursor->hbmColor,
-                               CursorFrame->xHotspot,
-                               CursorFrame->yHotspot,
-                               gpsi->ptCursor.x,
-                               gpsi->ptCursor.y,
-                               CursorFrame->hbmAlpha ? SPS_ALPHA : 0);
+            MsqSetPointerShapeLocked(hdcScreen,
+                                     CursorFrame->hbmAlpha ? NULL : NewCursor->hbmMask,
+                                     CursorFrame->hbmAlpha ? NewCursor->hbmAlpha : NewCursor->hbmColor,
+                                     CursorFrame->xHotspot,
+                                     CursorFrame->yHotspot,
+                                     gpsi->ptCursor.x,
+                                     gpsi->ptCursor.y,
+                                     CursorFrame->hbmAlpha ? SPS_ALPHA : 0);
         }
         else /* Note: OldCursor != NewCursor so we have to hide cursor */
         {
             /* Remove the cursor */
-            GreMovePointer(hdcScreen, -1, -1);
+            MsqMovePointerLocked(hdcScreen, -1, -1);
             TRACE("Removing pointer!\n");
         }
         IntGetSysCursorInfo()->CurrentCursorObject = NewCursor;
@@ -200,13 +262,13 @@ int UserShowCursor(BOOL bShow)
         if (bShow)
         {
             /* Show the pointer */
-            GreMovePointer(hdcScreen, gpsi->ptCursor.x, gpsi->ptCursor.y);
+            MsqMovePointerLocked(hdcScreen, gpsi->ptCursor.x, gpsi->ptCursor.y);
             TRACE("Showing pointer!\n");
         }
         else
         {
             /* Remove the pointer */
-            GreMovePointer(hdcScreen, -1, -1);
+            MsqMovePointerLocked(hdcScreen, -1, -1);
             TRACE("Removing pointer!\n");
         }
 
@@ -586,6 +648,8 @@ co_MsqInsertMouseMessage(MSG* Msg, DWORD flags, ULONG_PTR dwExtraInfo, BOOL Hook
    PTHREADINFO pti;
    PUSER_MESSAGE_QUEUE MessageQueue;
    PSYSTEM_CURSORINFO CurInfo;
+   BOOL bMovePointer = FALSE;
+   LONG xPointer = 0, yPointer = 0;
 
    Msg->time = EngGetTickCount32();
 
@@ -671,23 +735,30 @@ co_MsqInsertMouseMessage(MSG* Msg, DWORD flags, ULONG_PTR dwExtraInfo, BOOL Hook
                if(CurInfo->CurrentCursorObject != MessageQueue->CursorObject)
                {
                    /* Call GDI to set the new screen cursor */
-                    GreSetPointerShape(hdcScreen,
-                                       MessageQueue->CursorObject->hbmAlpha ?
-                                           NULL : MessageQueue->CursorObject->hbmMask,
-                                       MessageQueue->CursorObject->hbmAlpha ?
-                                           MessageQueue->CursorObject->hbmAlpha : MessageQueue->CursorObject->hbmColor,
-                                       MessageQueue->CursorObject->xHotspot,
-                                       MessageQueue->CursorObject->yHotspot,
-                                       gpsi->ptCursor.x,
-                                       gpsi->ptCursor.y,
-                                       MessageQueue->CursorObject->hbmAlpha ? SPS_ALPHA : 0);
+                    MsqSetPointerShapeLocked(hdcScreen,
+                                             MessageQueue->CursorObject->hbmAlpha ?
+                                                 NULL : MessageQueue->CursorObject->hbmMask,
+                                             MessageQueue->CursorObject->hbmAlpha ?
+                                                 MessageQueue->CursorObject->hbmAlpha : MessageQueue->CursorObject->hbmColor,
+                                             MessageQueue->CursorObject->xHotspot,
+                                             MessageQueue->CursorObject->yHotspot,
+                                             gpsi->ptCursor.x,
+                                             gpsi->ptCursor.y,
+                                             MessageQueue->CursorObject->hbmAlpha ? SPS_ALPHA : 0);
 
                } else
-                   GreMovePointer(hdcScreen, Msg->pt.x, Msg->pt.y);
+               {
+                   bMovePointer = TRUE;
+                   xPointer = Msg->pt.x;
+                   yPointer = Msg->pt.y;
+               }
            }
            /* Check if we have to hide cursor */
            else if (CurInfo->ShowingCursor >= 0)
-               GreMovePointer(hdcScreen, -1, -1);
+           {
+               bMovePointer = TRUE;
+               xPointer = yPointer = -1;
+           }
 
            /* Update global cursor info */
            CurInfo->ShowingCursor = MessageQueue->iCursorLevel;
@@ -722,8 +793,19 @@ co_MsqInsertMouseMessage(MSG* Msg, DWORD flags, ULONG_PTR dwExtraInfo, BOOL Hook
    else if (hdcScreen)
    {
        /* always show cursor on background; FIXME: set default pointer */
-       GreMovePointer(hdcScreen, Msg->pt.x, Msg->pt.y);
        CurInfo->ShowingCursor = 0;
+       bMovePointer = TRUE;
+       xPointer = Msg->pt.x;
+       yPointer = Msg->pt.y;
+   }
+
+   /* The raw-input caller retains no lock-protected object across this call. */
+   if (bMovePointer)
+   {
+       if (PsGetCurrentThreadWin32Thread() == ptiRawInput)
+           MsqMovePointerOutsideUser(hdcScreen, xPointer, yPointer);
+       else
+           MsqMovePointerLocked(hdcScreen, xPointer, yPointer);
    }
 }
 
@@ -2374,7 +2456,7 @@ MsqCleanupMessageQueue(PTHREADINFO pti)
            /* Get the screen DC */
            hdcScreen = IntGetScreenDC();
            if (hdcScreen)
-               GreMovePointer(hdcScreen, -1, -1);
+               MsqMovePointerLocked(hdcScreen, -1, -1);
            IntGetSysCursorInfo()->CurrentCursorObject = NULL;
        }
 
