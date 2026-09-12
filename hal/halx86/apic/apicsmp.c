@@ -177,7 +177,7 @@ HalRequestIpiSpecifyVector(
     _In_ UCHAR Vector)
 {
     KAFFINITY ActiveProcessors = HalpActiveProcessors;
-    KAFFINITY RemainingSet, SetMember, CompleteSet;
+    KAFFINITY RemainingSet, SetMember;
     ULONG ProcessorIndex;
     ULONG LApicId;
 
@@ -187,38 +187,6 @@ HalRequestIpiSpecifyVector(
     /* Nothing to deliver after applying the online processor mask. */
     if (TargetSet == 0)
         return;
-
-    /*
-     * Once every enumerated processor is online, a request for every other
-     * processor can use the architectural all-excluding-self shorthand.  The
-     * RTC clock broadcast is the dominant caller: issuing one physical ICR
-     * command per target otherwise serializes 31 APIC transactions on a
-     * 32-processor machine for every clock tick.
-     *
-     * Do not use shorthand while AP startup is incomplete.  It cannot express
-     * the active subset and could interrupt a processor still in startup.
-     */
-    CompleteSet = 0;
-    if (HalpApicInfoTable.ProcessorCount == sizeof(KAFFINITY) * 8)
-    {
-        CompleteSet = ~(KAFFINITY)0;
-    }
-    else if (HalpApicInfoTable.ProcessorCount < sizeof(KAFFINITY) * 8)
-    {
-        CompleteSet = AFFINITY_MASK(HalpApicInfoTable.ProcessorCount) - 1;
-    }
-
-    if (CompleteSet &&
-        (ActiveProcessors == CompleteSet) &&
-        (TargetSet == (CompleteSet & ~KeGetCurrentPrcb()->SetMember)))
-    {
-        ApicRequestGlobalInterrupt(0,
-                                   Vector,
-                                   APIC_MT_Fixed,
-                                   APIC_TGM_Edge,
-                                   APIC_DSH_AllExcludingSelf);
-        return;
-    }
 
     /* Loop while we have more processors */
     RemainingSet = TargetSet;
