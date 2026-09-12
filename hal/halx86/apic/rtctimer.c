@@ -31,6 +31,8 @@ static ULONG HalpRuntimeClockAccumulator;
 static BOOLEAN HalpSetClockRate;
 static UCHAR HalpNextClockRate;
 
+extern volatile KAFFINITY HalpProfilingProcessorMask;
+
 /*!
     \brief Converts the CMOS RTC rate into the time increment in 0.1ns intervals.
 
@@ -144,6 +146,7 @@ FASTCALL
 HalpClockInterruptHandler(IN PKTRAP_FRAME TrapFrame)
 {
     ULONG LastIncrement;
+    KAFFINITY TargetSet;
     KIRQL Irql;
 
     /* Enter trap */
@@ -188,11 +191,9 @@ HalpClockInterruptHandler(IN PKTRAP_FRAME TrapFrame)
     }
 
     /*
-     * KeUpdateSystemTime charges processor runtime only when the variable-rate
-     * RTC has accumulated one maximum (base) clock tick.  Keep the AP clocks
-     * on that same cadence.  Broadcasting every sub-tick makes AP quantums and
-     * DPC accounting run up to sixteen times faster when a caller requests the
-     * minimum timer resolution.
+     * APs normally receive processor-local LAPIC timer interrupts.  An AP
+     * temporarily gives that timer to profiling while ProfileTime is active;
+     * only those processors need a BSP clock IPI during the interval.
      */
     if (!KeGetCurrentPrcb()->SkipTick)
     {
@@ -200,7 +201,11 @@ HalpClockInterruptHandler(IN PKTRAP_FRAME TrapFrame)
         if (HalpRuntimeClockAccumulator >= HalpMaximumTimeIncrement)
         {
             HalpRuntimeClockAccumulator -= HalpMaximumTimeIncrement;
-            HalpBroadcastClockIpi(CLOCK_IPI_VECTOR);
+            TargetSet = HalpProfilingProcessorMask &
+                        KeQueryActiveProcessors() &
+                        ~KeGetCurrentPrcb()->SetMember;
+            if (TargetSet)
+                HalpSendClockIpi(TargetSet, CLOCK_IPI_VECTOR);
         }
     }
 
