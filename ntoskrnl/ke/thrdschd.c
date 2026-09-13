@@ -1294,9 +1294,23 @@ KiSetPriorityThread(IN PKTHREAD Thread,
             }
             else if (Thread->State == DeferredReady)
             {
-                /* FIXME: TODO */
-                DPRINT1("Deferred state not yet supported\n");
-                ASSERT(FALSE);
+                /* Synchronize with the processor owning the deferred list. */
+                Processor = Thread->DeferredProcessor;
+                Prcb = KiProcessorBlock[Processor];
+                KiAcquirePrcbLock(Prcb);
+
+                if ((Thread->State == DeferredReady) &&
+                    (Thread->DeferredProcessor == Processor))
+                {
+                    Thread->Priority = (SCHAR)Priority;
+                    KiReleasePrcbLock(Prcb);
+                }
+                else
+                {
+                    /* The owning processor advanced the state; retry it. */
+                    KiReleasePrcbLock(Prcb);
+                    continue;
+                }
             }
             else
             {
