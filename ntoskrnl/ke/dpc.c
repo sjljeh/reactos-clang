@@ -917,15 +917,16 @@ KeFlushQueuedDpcs(VOID)
     PKTHREAD CurrentThread;
     PKPRCB CurrentPrcb;
     KPRIORITY OldPriority;
-    KAFFINITY ProcessorSet, RequestedSet, CurrentSet;
+    KAFFINITY ProcessorSet, RequestedSet, CurrentSet, PreviousAffinity;
     KIRQL OldIrql;
-    BOOLEAN AffinityChanged;
+    BOOLEAN AffinityChanged, PreviousSystemAffinityActive;
 
     PAGED_CODE();
-    ASSERT(KeGetCurrentThread()->SystemAffinityActive == FALSE);
 
     /* Run promptly while visiting each processor in the active set. */
     CurrentThread = KeGetCurrentThread();
+    PreviousAffinity = CurrentThread->Affinity;
+    PreviousSystemAffinityActive = CurrentThread->SystemAffinityActive;
     OldPriority = KeSetPriorityThread(CurrentThread, HIGH_PRIORITY);
     ProcessorSet = KeActiveProcessors;
     RequestedSet = 0;
@@ -961,7 +962,12 @@ KeFlushQueuedDpcs(VOID)
     }
 
     if (AffinityChanged)
-        KeRevertToUserAffinityThread();
+    {
+        if (PreviousSystemAffinityActive)
+            KeSetSystemAffinityThread(PreviousAffinity);
+        else
+            KeRevertToUserAffinityThread();
+    }
 
     KeSetPriorityThread(CurrentThread, OldPriority);
 }
