@@ -809,16 +809,10 @@ KeInsertQueueDpc(IN PKDPC Dpc,
                 /* Check if this is the same CPU */
                 if (Prcb != CurrentPrcb)
                 {
-                    /*
-                     * Check if the DPC is of high importance or above the
-                     * maximum depth. If it is, then make sure that the CPU
-                     * isn't idle, or that it's sleeping.
-                     */
+                    /* Request prompt service for urgent remote work. */
                     if (((Dpc->Importance == HighImportance) ||
                         (DpcData->DpcQueueDepth >=
-                         Prcb->MaximumDpcQueueDepth)) &&
-                        (!(AFFINITY_MASK(Cpu) & KiIdleSummary) ||
-                         (Prcb->Sleeping)))
+                         Prcb->MaximumDpcQueueDepth)))
                     {
                         /* Set interrupt requested */
                         Prcb->DpcInterruptRequested = TRUE;
