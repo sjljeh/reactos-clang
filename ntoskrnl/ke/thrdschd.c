@@ -64,11 +64,17 @@ KiFindStealableThread(
             ASSERT(Thread->State == Ready);
             ASSERT(Thread->NextProcessor == SourcePrcb->Number);
 
-            if ((Thread->Priority <= MaximumPriority) &&
-                (Thread->Affinity & AFFINITY_MASK(TargetProcessor)))
+            /* Do not invert the thread-to-PRCB lock order while stealing. */
+            if (!KiTryThreadLock(Thread))
             {
-                KiRemoveReadyQueue(SourcePrcb, Thread);
-                return Thread;
+                if ((Thread->Priority <= MaximumPriority) &&
+                    (Thread->Affinity & AFFINITY_MASK(TargetProcessor)))
+                {
+                    KiRemoveReadyQueue(SourcePrcb, Thread);
+                    return Thread;
+                }
+
+                KiReleaseThreadLock(Thread);
             }
 
             /* Keep idle-side balancing work bounded under pinned load. */
@@ -152,6 +158,7 @@ KiStealReadyThread(
             TargetPrcb->IdleSchedule = FALSE;
             InterlockedAndSetMember(&KiIdleSummary, ~TargetPrcb->SetMember);
             KiSchedulerCpuData[TargetPrcb->Number].FindAny++;
+            KiReleaseThreadLock(Thread);
         }
 
         KiReleasePrcbLock(SourcePrcb);
@@ -387,6 +394,7 @@ KiTryBalanceReadyQueuePair(
 
     KiSchedulerCpuData[KeGetCurrentProcessorNumber()].FindAny++;
     Moved = TRUE;
+    KiReleaseThreadLock(Thread);
 
 Exit:
     KiReleasePrcbLock(SecondPrcb);
