@@ -1013,31 +1013,47 @@ KeGenericCallDpc(
     _In_ PKDEFERRED_ROUTINE Routine,
     _In_opt_ PVOID Context)
 {
-    ULONG Barrier = KeNumberProcessors;
+    ULONG Barrier;
     KIRQL OldIrql;
     DEFERRED_REVERSE_BARRIER ReverseBarrier;
 #ifdef CONFIG_SMP
+    KAFFINITY TargetSet, ScanSet;
     PKDPC Dpc;
     ULONG Processor;
 #endif
 
     ASSERT(KeGetCurrentIrql () < DISPATCH_LEVEL);
 
-    ReverseBarrier.Barrier = Barrier;
-    ReverseBarrier.TotalProcessors = Barrier;
-
 #ifdef CONFIG_SMP
     /* Keep the caller on processor zero and serialize use of the PRCB DPCs. */
     KeSetSystemAffinityThread(AFFINITY_MASK(0));
     ExAcquireFastMutex(&KiGenericCallDpcMutex);
+
+    /* Use one active-set snapshot for both the queue targets and barriers. */
+    TargetSet = KeActiveProcessors & ~KeGetCurrentPrcb()->SetMember;
+    ScanSet = TargetSet;
+    Barrier = 1;
+    while (ScanSet)
+    {
+        NT_VERIFY(BitScanForwardAffinity(&Processor, ScanSet) != FALSE);
+        ScanSet &= ~AFFINITY_MASK(Processor);
+        Barrier++;
+    }
+#else
+    Barrier = 1;
 #endif
+
+    ReverseBarrier.Barrier = Barrier;
+    ReverseBarrier.TotalProcessors = Barrier;
 
     KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
 
 #ifdef CONFIG_SMP
     /* Queue one processor-local call DPC on every remote processor. */
-    for (Processor = 1; Processor < KeNumberProcessors; Processor++)
+    while (TargetSet)
     {
+        NT_VERIFY(BitScanForwardAffinity(&Processor, TargetSet) != FALSE);
+        TargetSet &= ~AFFINITY_MASK(Processor);
         Dpc = &KiProcessorBlock[Processor]->CallDpc;
         Dpc->DeferredRoutine = Routine;
         Dpc->DeferredContext = Context;
