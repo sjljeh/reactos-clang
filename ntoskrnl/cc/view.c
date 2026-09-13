@@ -1060,8 +1060,7 @@ CcRosEnsureVacbResident(
         {
             NTSTATUS Status = MmMakeDataSectionResident(SharedCacheMap->FileObject->SectionObjectPointer,
                                                         Vacb->FileOffset.QuadPart + Offset,
-                                                        Length,
-                                                        &SharedCacheMap->ValidDataLength);
+                                                        Length);
             if (!NT_SUCCESS(Status))
                 ExRaiseStatus(Status);
         }
@@ -1515,15 +1514,21 @@ CcRosInitializeFileCache (
     /* Create the section */
     if (Allocated)
     {
+        LARGE_INTEGER SectionSize;
         NTSTATUS Status;
 
         ASSERT(SharedCacheMap->Section == NULL);
+
+        /* Leave room to grow, one view worth for files opened read only */
+        SectionSize.QuadPart = CcRosRoundSectionSize(max(SharedCacheMap->SectionSize.QuadPart, 1),
+                                                     FileObject->WriteAccess ?
+                                                     CC_SECTION_GROWTH : VACB_MAPPING_GRANULARITY);
 
         Status = MmCreateSection(
             &SharedCacheMap->Section,
             SECTION_ALL_ACCESS,
             NULL,
-            &SharedCacheMap->SectionSize,
+            &SectionSize,
             PAGE_READWRITE,
             SEC_RESERVE,
             NULL,
