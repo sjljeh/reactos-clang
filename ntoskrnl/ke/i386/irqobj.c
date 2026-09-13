@@ -418,7 +418,7 @@ KeConnectInterrupt(IN PKINTERRUPT Interrupt)
     Error = FALSE;
 
     /* Set the system affinity and acquire the dispatcher lock */
-    KeSetSystemAffinityThread(1 << Number);
+    KeSetSystemAffinityThread(AFFINITY_MASK(Number));
     OldIrql = KiAcquireDispatcherLock();
 
     /* Check if it's already been connected */
@@ -504,7 +504,7 @@ KeDisconnectInterrupt(IN PKINTERRUPT Interrupt)
     BOOLEAN State;
 
     /* Set the affinity */
-    KeSetSystemAffinityThread(1 << Interrupt->Number);
+    KeSetSystemAffinityThread(AFFINITY_MASK(Interrupt->Number));
 
     /* Lock the dispatcher */
     OldIrql = KiAcquireDispatcherLock();

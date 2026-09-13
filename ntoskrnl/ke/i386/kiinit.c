@@ -319,7 +319,7 @@ KiInitializePcr(IN ULONG ProcessorNumber,
 
     /* Set the Processor Number and current Processor Mask */
     Pcr->PrcbData.Number = (UCHAR)ProcessorNumber;
-    Pcr->PrcbData.SetMember = 1 << ProcessorNumber;
+    Pcr->PrcbData.SetMember = AFFINITY_MASK(ProcessorNumber);
 
     /* Set the PRCB for this Processor */
     KiProcessorBlock[ProcessorNumber] = Pcr->Prcb;
@@ -865,9 +865,9 @@ AppCpuInit:
 
     /* Setup CPU-related fields */
     __writefsdword(KPCR_NUMBER, Cpu);
-    __writefsdword(KPCR_SET_MEMBER, 1 << Cpu);
-    __writefsdword(KPCR_SET_MEMBER_COPY, 1 << Cpu);
-    __writefsdword(KPCR_PRCB_SET_MEMBER, 1 << Cpu);
+    __writefsdword(KPCR_SET_MEMBER, AFFINITY_MASK(Cpu));
+    __writefsdword(KPCR_SET_MEMBER_COPY, AFFINITY_MASK(Cpu));
+    __writefsdword(KPCR_PRCB_SET_MEMBER, AFFINITY_MASK(Cpu));
 
     KiVerifyCpuFeatures(Pcr->Prcb);
     KiSetCR0Bits();
