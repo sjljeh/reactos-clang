@@ -859,6 +859,20 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
         /* Sanity check */
         ASSERT(NextThread->State == Standby);
 
+#ifdef CONFIG_SMP
+        /* A selected idle thread is a placeholder, not migratable work. */
+        if (NextThread == Prcb->IdleThread)
+        {
+            Thread->State = Standby;
+            Prcb->NextThread = Thread;
+            InterlockedAndSetMember(&KiIdleSummary, ~Prcb->SetMember);
+            Prcb->IdleSchedule = FALSE;
+            KiReleasePrcbLock(Prcb);
+            KiReleaseThreadLock(Thread);
+            return;
+        }
+#endif
+
         /* Check if priority changed */
         if (OldPriority > NextThread->Priority)
         {
