@@ -1346,10 +1346,11 @@ KiUpdateEffectiveAffinityThread(
         RequestInterrupt = FALSE;
 
         /* Only scheduler-owned states require a processor queue lock. */
-        if ((State != Ready) &&
-            (State != Standby) &&
-            (State != Running) &&
-            (State != DeferredReady))
+        if (((State == Ready) && Thread->ProcessReadyQueue) ||
+            ((State != Ready) &&
+             (State != Standby) &&
+             (State != Running) &&
+             (State != DeferredReady)))
         {
             Thread->Affinity = Thread->UserAffinity;
             Thread->IdealProcessor = Thread->UserIdealProcessor;
