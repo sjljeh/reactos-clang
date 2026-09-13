@@ -1331,73 +1331,103 @@ KiUpdateEffectiveAffinityThread(
     _In_ PKTHREAD Thread)
 {
     PKPRCB Prcb;
+    PKTHREAD NextThread;
     BOOLEAN WasTransferable, IsTransferable;
+    BOOLEAN RequestInterrupt;
+    ULONG Processor;
+    KTHREAD_STATE State;
 
     /* Acquire the thread lock */
     KiAcquireThreadLock(Thread);
 
-    /* Get the PRCB that the thread is to be run on and lock it */
-    Prcb = KiProcessorBlock[Thread->NextProcessor];
-    KiAcquirePrcbLock(Prcb);
-
-    /* Set the thread's affinity and keep ready-queue accounting coherent. */
-    WasTransferable = KiIsThreadTransferable(Thread);
-    Thread->Affinity = Thread->UserAffinity;
-    Thread->IdealProcessor = Thread->UserIdealProcessor;
-    IsTransferable = KiIsThreadTransferable(Thread);
-    if ((Thread->State == Ready) && (WasTransferable != IsTransferable))
+    for (;;)
     {
-        if (IsTransferable)
+        State = Thread->State;
+        RequestInterrupt = FALSE;
+
+        /* Only scheduler-owned states require a processor queue lock. */
+        if ((State != Ready) &&
+            (State != Standby) &&
+            (State != Running) &&
+            (State != DeferredReady))
         {
-            KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount++;
+            Thread->Affinity = Thread->UserAffinity;
+            Thread->IdealProcessor = Thread->UserIdealProcessor;
+            break;
         }
-        else
+
+        Processor = (State == DeferredReady) ?
+                    Thread->DeferredProcessor : Thread->NextProcessor;
+        Prcb = KiProcessorBlock[Processor];
+        KiAcquirePrcbLock(Prcb);
+
+        /* Retry if the thread changed state or queue while acquiring the lock. */
+        if ((Thread->State != State) ||
+            ((State == DeferredReady) &&
+             (Thread->DeferredProcessor != Processor)) ||
+            ((State != DeferredReady) &&
+             (Thread->NextProcessor != Processor)) ||
+            ((State == Standby) && (Prcb->NextThread != Thread)) ||
+            ((State == Running) && (Prcb->CurrentThread != Thread)))
         {
-            ASSERT(KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount > 0);
-            KiSchedulerCpuData[Prcb->Number].TransferableReadyThreadCount--;
+            KiReleasePrcbLock(Prcb);
+            continue;
         }
+
+        /* Set the affinity and keep ready-queue accounting coherent. */
+        WasTransferable = KiIsThreadTransferable(Thread);
+        Thread->Affinity = Thread->UserAffinity;
+        Thread->IdealProcessor = Thread->UserIdealProcessor;
+        IsTransferable = KiIsThreadTransferable(Thread);
+        if ((State == Ready) && (WasTransferable != IsTransferable))
+        {
+            if (IsTransferable)
+            {
+                KiSchedulerCpuData[Processor].TransferableReadyThreadCount++;
+            }
+            else
+            {
+                ASSERT(KiSchedulerCpuData[Processor].TransferableReadyThreadCount > 0);
+                KiSchedulerCpuData[Processor].TransferableReadyThreadCount--;
+            }
+        }
+
+        /* Move scheduler-owned work that can no longer run on this CPU. */
+        if (!(Prcb->SetMember & Thread->Affinity))
+        {
+            if (State == Running)
+            {
+                if (!Prcb->NextThread)
+                {
+                    NextThread = KiSelectNextThread(Prcb);
+                    NextThread->State = Standby;
+                    Prcb->NextThread = NextThread;
+                }
+
+                RequestInterrupt = (Prcb != KeGetCurrentPrcb());
+            }
+            else if (State == Standby)
+            {
+                NextThread = KiSelectNextThread(Prcb);
+                NextThread->State = Standby;
+                Prcb->NextThread = NextThread;
+                KiInsertDeferredReadyList(Thread);
+            }
+            else if (State == Ready)
+            {
+                KiRemoveReadyQueue(Prcb, Thread);
+                KiInsertDeferredReadyList(Thread);
+            }
+        }
+
+        KiReleasePrcbLock(Prcb);
+
+        if (RequestInterrupt)
+            KiIpiSend(AFFINITY_MASK(Processor), IPI_DPC);
+
+        break;
     }
 
-    /* Check if the affinity doesn't match with the current processor */
-    if ((Prcb->SetMember & Thread->Affinity) == 0)
-    {
-        if (Thread->State == Running)
-        {
-            /* Check if there is the next thread is selected already */
-            if (Prcb->NextThread == NULL)
-            {
-                /* It is not, select a new thread and set it on standby */
-                Prcb->NextThread = KiSelectNextThread(Prcb);
-                Prcb->NextThread->State = Standby;
-            }
-
-            /* Check if the thread is running on a different processor */
-            if (Prcb != KeGetCurrentPrcb())
-            {
-                /* It is, send an IPI */
-                KiIpiSend(AFFINITY_MASK(Thread->NextProcessor), IPI_DPC);
-            }
-        }
-        else if (Thread->State == Standby)
-        {
-            /* Select a new thread and set it on standby */
-            Prcb->NextThread = KiSelectNextThread(Prcb);
-            Prcb->NextThread->State = Standby;
-
-            /* Insert the thread back into the ready list */
-            KiInsertDeferredReadyList(Thread);
-        }
-        else if (Thread->State == Ready)
-        {
-            /* Remove it from the list */
-            KiRemoveReadyQueue(Prcb, Thread);
-
-            /* Insert the thread back into the ready list */
-            KiInsertDeferredReadyList(Thread);
-        }
-    }
-
-    KiReleasePrcbLock(Prcb);
     KiReleaseThreadLock(Thread);
 }
 #endif // CONFIG_SMP
