@@ -26,6 +26,8 @@ KDPC KiTimerExpireDpc;
 ULONG KiTimeLimitIsrMicroseconds;
 ULONG KiDPCTimeout = 110;
 
+#define DEFERRED_REVERSE_BARRIER_SYNCHRONIZED 0x80000000UL
+
 /* PRIVATE FUNCTIONS *********************************************************/
 
 VOID
@@ -999,28 +1001,60 @@ KeSetTargetProcessorDpc(IN PKDPC Dpc,
  */
 VOID
 NTAPI
-KeGenericCallDpc(IN PKDEFERRED_ROUTINE Routine,
-                 IN PVOID Context)
+KeGenericCallDpc(
+    _In_ PKDEFERRED_ROUTINE Routine,
+    _In_opt_ PVOID Context)
 {
     ULONG Barrier = KeNumberProcessors;
     KIRQL OldIrql;
     DEFERRED_REVERSE_BARRIER ReverseBarrier;
+#ifdef CONFIG_SMP
+    PKDPC Dpc;
+    ULONG Processor;
+#endif
+
     ASSERT(KeGetCurrentIrql () < DISPATCH_LEVEL);
 
-    //
-    // The barrier is the number of processors, each processor will decrement it
-    // by one, so when all processors have run the DPC, the barrier reaches zero
-    //
     ReverseBarrier.Barrier = Barrier;
     ReverseBarrier.TotalProcessors = Barrier;
 
-    //
-    // But we don't need the barrier on UP, since we can simply call the routine
-    // directly while at DISPATCH_LEVEL and not worry about anything else
-    //
+#ifdef CONFIG_SMP
+    /* Keep the caller on processor zero and serialize use of the PRCB DPCs. */
+    KeSetSystemAffinityThread(AFFINITY_MASK(0));
+    ExAcquireFastMutex(&KiGenericCallDpcMutex);
+#endif
+
     KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
+
+#ifdef CONFIG_SMP
+    /* Queue one processor-local call DPC on every remote processor. */
+    for (Processor = 1; Processor < KeNumberProcessors; Processor++)
+    {
+        Dpc = &KiProcessorBlock[Processor]->CallDpc;
+        Dpc->DeferredRoutine = Routine;
+        Dpc->DeferredContext = Context;
+        NT_VERIFY(KeInsertQueueDpc(Dpc, &Barrier, &ReverseBarrier) != FALSE);
+    }
+#endif
+
+    /* Execute the processor-zero contribution directly. */
     Routine(&KeGetCurrentPrcb()->CallDpc, Context, &Barrier, &ReverseBarrier);
+
+#ifdef CONFIG_SMP
+    /* The callback reports completion only after all of its work is done. */
+    while (*(volatile ULONG *)&Barrier != 0)
+    {
+        YieldProcessor();
+        KeMemoryBarrierWithoutFence();
+    }
+#endif
+
     KeLowerIrql(OldIrql);
+
+#ifdef CONFIG_SMP
+    ExReleaseFastMutex(&KiGenericCallDpcMutex);
+    KeRevertToUserAffinityThread();
+#endif
 }
 
 /*
@@ -1028,11 +1062,9 @@ KeGenericCallDpc(IN PKDEFERRED_ROUTINE Routine,
  */
 VOID
 NTAPI
-KeSignalCallDpcDone(IN PVOID SystemArgument1)
+KeSignalCallDpcDone(
+    _In_ PVOID SystemArgument1)
 {
-    //
-    // Decrement the barrier, which is actually the processor count
-    //
     InterlockedDecrement((PLONG)SystemArgument1);
 }
 
@@ -1041,13 +1073,57 @@ KeSignalCallDpcDone(IN PVOID SystemArgument1)
  */
 BOOLEAN
 NTAPI
-KeSignalCallDpcSynchronize(IN PVOID SystemArgument2)
+KeSignalCallDpcSynchronize(
+    _In_ PVOID SystemArgument2)
 {
-    //
-    // There is nothing to do on UP systems -- the processor calling this wins
-    //
+#ifdef CONFIG_SMP
+    PDEFERRED_REVERSE_BARRIER ReverseBarrier = SystemArgument2;
+    volatile LONG *Barrier = (volatile LONG *)&ReverseBarrier->Barrier;
+
+    /* Do not enter a new generation while the preceding one drains. */
+    while (*Barrier & DEFERRED_REVERSE_BARRIER_SYNCHRONIZED)
+    {
+        YieldProcessor();
+        KeMemoryBarrierWithoutFence();
+    }
+
+    /* The final arrival opens the barrier and wins the tie breaker. */
+    if (InterlockedDecrement((PLONG)Barrier) == 0)
+    {
+        if (ReverseBarrier->TotalProcessors == 1)
+        {
+            InterlockedExchange((PLONG)Barrier,
+                                ReverseBarrier->TotalProcessors);
+        }
+        else
+        {
+            InterlockedExchange((PLONG)Barrier,
+                                DEFERRED_REVERSE_BARRIER_SYNCHRONIZED + 1);
+        }
+
+        return TRUE;
+    }
+
+    /* Wait for the final arrival, then account for this processor leaving. */
+    while (!(*Barrier & DEFERRED_REVERSE_BARRIER_SYNCHRONIZED))
+    {
+        YieldProcessor();
+        KeMemoryBarrierWithoutFence();
+    }
+
+    if ((ULONG)InterlockedIncrement((PLONG)Barrier) ==
+        (ReverseBarrier->TotalProcessors |
+         DEFERRED_REVERSE_BARRIER_SYNCHRONIZED))
+    {
+        InterlockedExchange((PLONG)Barrier,
+                            ReverseBarrier->TotalProcessors);
+    }
+
+    return FALSE;
+#else
     UNREFERENCED_PARAMETER(SystemArgument2);
     return TRUE;
+#endif
 }
 
 /* EOF */
