@@ -872,7 +872,7 @@ NTAPI
 KeRemoveQueueDpc(IN PKDPC Dpc)
 {
     PKDPC_DATA DpcData;
-    BOOLEAN Enable;
+    BOOLEAN Enable, DpcRemoved = FALSE;
     ASSERT_DPC(Dpc);
 
     /* Disable interrupts */
@@ -892,6 +892,7 @@ KeRemoveQueueDpc(IN PKDPC Dpc)
             DpcData->DpcQueueDepth--;
             RemoveEntryList(&Dpc->DpcListEntry);
             Dpc->DpcData = NULL;
+            DpcRemoved = TRUE;
         }
 
         /* Release the lock */
@@ -901,8 +902,8 @@ KeRemoveQueueDpc(IN PKDPC Dpc)
     /* Re-enable interrupts */
     KeRestoreInterrupts(Enable);
 
-    /* Return if the DPC was in the queue or not */
-    return DpcData ? TRUE : FALSE;
+    /* Return whether this call removed the DPC from the queue */
+    return DpcRemoved;
 }
 
 /*
