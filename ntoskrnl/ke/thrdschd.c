@@ -688,12 +688,12 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
     ASSERT(Thread->State == DeferredReady);
     ASSERT((Thread->Priority >= 0) && (Thread->Priority <= HIGH_PRIORITY));
 
+    /* Serialize placement with remote priority and affinity changes. */
+    KiAcquireThreadLock(Thread);
+
     /* Check if we have any adjusts to do */
     if (Thread->AdjustReason == AdjustBoost)
     {
-        /* Lock the thread */
-        KiAcquireThreadLock(Thread);
-
         /* Check if the priority is low enough to qualify for boosting */
         if ((Thread->Priority <= Thread->AdjustIncrement) &&
             (Thread->Priority < (LOW_REALTIME_PRIORITY - 3)) &&
@@ -725,14 +725,12 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
         /* Make sure the priority is still valid */
         ASSERT((Thread->Priority >= 0) && (Thread->Priority <= HIGH_PRIORITY));
 
-        /* Release the lock and clear the adjust reason */
-        KiReleaseThreadLock(Thread);
+        /* Clear the adjust reason */
         Thread->AdjustReason = AdjustNone;
     }
     else if (Thread->AdjustReason == AdjustUnwait)
     {
-        /* Acquire the thread lock and check if this is a real-time thread */
-        KiAcquireThreadLock(Thread);
+        /* Check if this is a real-time thread */
         if (Thread->Priority < LOW_REALTIME_PRIORITY)
         {
             /* It's not real time, but is it time critical? */
@@ -818,8 +816,7 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
         /* Make sure the priority makes sense */
         ASSERT((Thread->Priority >= 0) && (Thread->Priority <= HIGH_PRIORITY));
 
-        /* Release the thread lock and reset the adjust reason */
-        KiReleaseThreadLock(Thread);
+        /* Reset the adjust reason */
         Thread->AdjustReason = AdjustNone;
     }
 
@@ -850,6 +847,7 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
 
         /* Unlock the PRCB and return */
         KiReleasePrcbLock(Prcb);
+        KiReleaseThreadLock(Thread);
         return;
     }
 #endif // !CONFIG_SMP
@@ -882,6 +880,7 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
             NextThread->State = DeferredReady;
             NextThread->DeferredProcessor = Prcb->Number;
             KiReleasePrcbLock(Prcb);
+            KiReleaseThreadLock(Thread);
             KiDeferredReadyThread(NextThread);
             return;
         }
@@ -910,10 +909,11 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
             KiReleasePrcbLock(Prcb);
 
             /* Check if we're running on another CPU */
-            if (KeGetCurrentProcessorNumber() != Thread->NextProcessor)
+            KiReleaseThreadLock(Thread);
+            if (KeGetCurrentProcessorNumber() != Processor)
             {
                 /* We are, send an IPI */
-                KiIpiSend(AFFINITY_MASK(Thread->NextProcessor), IPI_DPC);
+                KiIpiSend(AFFINITY_MASK(Processor), IPI_DPC);
             }
             return;
         }
@@ -934,6 +934,7 @@ KiDeferredReadyThread(IN PKTHREAD Thread)
 
     /* Release the lock */
     KiReleasePrcbLock(Prcb);
+    KiReleaseThreadLock(Thread);
 }
 
 PKTHREAD
