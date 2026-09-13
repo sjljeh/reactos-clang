@@ -190,6 +190,8 @@ ApicRequestSelfInterrupt(IN UCHAR Vector, UCHAR TriggerMode)
     Icr.LongLong = 0;
     Icr.Vector = Vector;
     Icr.MessageType = APIC_MT_Fixed;
+    /* Only INIT deassert may send a level-zero APIC message. */
+    Icr.Level = 1;
     Icr.TriggerMode = TriggerMode;
     Icr.DestinationShortHand = APIC_DSH_Self;
 
