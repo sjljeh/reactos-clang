@@ -1456,13 +1456,13 @@ KiSetAffinityThread(IN PKTHREAD Thread,
     Thread->UserAffinity = Affinity;
 
 #ifdef CONFIG_SMP
+    /* Keep the saved user placement valid during temporary system affinity. */
+    Thread->UserIdealProcessor =
+        KiFindIdealProcessor(Affinity, Thread->UserIdealProcessor);
+
     /* Check if system affinity is not active */
     if (!Thread->SystemAffinityActive)
     {
-        /* Calculate the new ideal processor from the affinity set */
-        Thread->UserIdealProcessor =
-            KiFindIdealProcessor(Affinity, Thread->UserIdealProcessor);
-
         /* Update the effective affinity */
         KiUpdateEffectiveAffinityThread(Thread);
     }
