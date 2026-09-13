@@ -138,6 +138,10 @@ NTSTATUS NTAPI KdInitializeLibrary(
 #ifdef _KDNET_EXTENSION_MACROS_
 extern PKDNET_EXTENSIBILITY_IMPORTS KdNetExtensibilityImports;
 
+#undef KdGetPciDataByOffset
+#undef KdSetPciDataByOffset
+#undef KdMapPhysicalMemory64
+#undef KdUnmapVirtualAddress
 #define KdGetPciDataByOffset      KdNetExtensibilityImports->GetPciDataByOffset
 #define KdSetPciDataByOffset      KdNetExtensibilityImports->SetPciDataByOffset
 #define KdGetPhysicalAddress      KdNetExtensibilityImports->GetPhysicalAddress

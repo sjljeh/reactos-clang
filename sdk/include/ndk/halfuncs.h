@@ -55,9 +55,12 @@ Author:
 #define KdMapPhysicalMemory64                               HALPRIVATEDISPATCH->KdMapPhysicalMemory64
 #define KdUnmapVirtualAddress                               HALPRIVATEDISPATCH->KdUnmapVirtualAddress
 #endif
-#if (NTDDI_VERSION >= NTDDI_LONGHORN)
+/* ReactOS also needs these callbacks in its XP-targeted KDNET build. */
+#if (NTDDI_VERSION >= NTDDI_LONGHORN) || defined(__REACTOS__)
 #define KdGetPciDataByOffset                                HALPRIVATEDISPATCH->KdGetPciDataByOffset
 #define KdSetPciDataByOffset                                HALPRIVATEDISPATCH->KdSetPciDataByOffset
+#endif
+#if (NTDDI_VERSION >= NTDDI_LONGHORN)
 #define HalGetInterruptVectorOverride                       HALPRIVATEDISPATCH->HalGetInterruptVectorOverride
 #define HalGetVectorInputOverride                           HALPRIVATEDISPATCH->HalGetVectorInputOverride
 #define HalLoadMicrocode                                    HALPRIVATEDISPATCH->HalLoadMicrocode

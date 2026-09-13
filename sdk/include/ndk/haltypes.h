@@ -1633,9 +1633,12 @@ typedef struct _HAL_PRIVATE_DISPATCH
     pKdMapPhysicalMemory64 KdMapPhysicalMemory64;
     pKdUnmapVirtualAddress KdUnmapVirtualAddress;
 #endif
-#if (NTDDI_VERSION >= NTDDI_LONGHORN)
+/* ReactOS also needs these callbacks in its XP-targeted KDNET build. */
+#if (NTDDI_VERSION >= NTDDI_LONGHORN) || defined(__REACTOS__)
     pKdGetPciDataByOffset KdGetPciDataByOffset;
     pKdSetPciDataByOffset KdSetPciDataByOffset;
+#endif
+#if (NTDDI_VERSION >= NTDDI_LONGHORN)
     pHalGetInterruptVector HalGetInterruptVectorOverride;
     pHalGetVectorInput HalGetVectorInputOverride;
     pHalLoadMicrocode HalLoadMicrocode;
