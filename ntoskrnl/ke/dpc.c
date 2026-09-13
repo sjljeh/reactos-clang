@@ -1026,10 +1026,14 @@ KeGenericCallDpc(
     ASSERT(KeGetCurrentIrql () < DISPATCH_LEVEL);
 
 #ifdef CONFIG_SMP
-    /* Keep the caller on processor zero and serialize use of the PRCB DPCs. */
-    KeSetSystemAffinityThread(AFFINITY_MASK(0));
+    /* Serialize use of the processor-local call DPC objects. */
     ExAcquireFastMutex(&KiGenericCallDpcMutex);
+#endif
 
+    /* Prevent migration while selecting targets and executing the callback. */
+    KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
+
+#ifdef CONFIG_SMP
     /* Use one active-set snapshot for both the queue targets and barriers. */
     TargetSet = KeActiveProcessors & ~KeGetCurrentPrcb()->SetMember;
     ScanSet = TargetSet;
@@ -1046,8 +1050,6 @@ KeGenericCallDpc(
 
     ReverseBarrier.Barrier = Barrier;
     ReverseBarrier.TotalProcessors = Barrier;
-
-    KeRaiseIrql(DISPATCH_LEVEL, &OldIrql);
 
 #ifdef CONFIG_SMP
     /* Queue one processor-local call DPC on every remote processor. */
@@ -1078,7 +1080,6 @@ KeGenericCallDpc(
 
 #ifdef CONFIG_SMP
     ExReleaseFastMutex(&KiGenericCallDpcMutex);
-    KeRevertToUserAffinityThread();
 #endif
 }
 
