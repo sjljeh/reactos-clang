@@ -919,42 +919,56 @@ VOID
 NTAPI
 KeFlushQueuedDpcs(VOID)
 {
-    ULONG ProcessorIndex;
-    PKPRCB TargetPrcb;
+    PKTHREAD CurrentThread;
+    PKPRCB CurrentPrcb;
+    KPRIORITY OldPriority;
+    KAFFINITY ProcessorSet, RequestedSet, CurrentSet;
+    KIRQL OldIrql;
+    BOOLEAN AffinityChanged;
 
     PAGED_CODE();
     ASSERT(KeGetCurrentThread()->SystemAffinityActive == FALSE);
 
-    /* Loop all processors */
-    for (ProcessorIndex = 0; ProcessorIndex < KeNumberProcessors; ProcessorIndex++)
-    {
-        /* Get the target processor's PRCB */
-        TargetPrcb = KiProcessorBlock[ProcessorIndex];
+    /* Run promptly while visiting each processor in the active set. */
+    CurrentThread = KeGetCurrentThread();
+    OldPriority = KeSetPriorityThread(CurrentThread, HIGH_PRIORITY);
+    ProcessorSet = KeActiveProcessors;
+    RequestedSet = 0;
+    AffinityChanged = FALSE;
 
-        /* Check if there are DPCs on either queues */
-        if ((TargetPrcb->DpcData[DPC_NORMAL].DpcQueueDepth > 0) ||
-            (TargetPrcb->DpcData[DPC_THREADED].DpcQueueDepth > 0))
+    for (;;)
+    {
+        CurrentPrcb = KeGetCurrentPrcb();
+        CurrentSet = CurrentPrcb->SetMember;
+
+        /* Force low-importance entries through the local dispatch path once. */
+        if (!(RequestedSet & CurrentSet) &&
+            ((CurrentPrcb->DpcData[DPC_NORMAL].DpcQueueDepth != 0) ||
+             (CurrentPrcb->DpcData[DPC_THREADED].DpcQueueDepth != 0)))
         {
-            /* Check if this is the current processor */
-            if (TargetPrcb == KeGetCurrentPrcb())
-            {
-                /* Request a DPC interrupt */
-                HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
-            }
-            else
-            {
-                /* Attach to the target processor. This will cause a DPC
-                   interrupt on the target processor and flush all DPCs. */
-                KeSetSystemAffinityThread(TargetPrcb->SetMember);
-            }
+            RequestedSet |= CurrentSet;
+            OldIrql = KeRaiseIrqlToDpcLevel();
+            HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
+            KeLowerIrql(OldIrql);
+
+            /* A dispatch may have resumed this thread on another processor. */
+            if (KeGetCurrentPrcb() != CurrentPrcb)
+                continue;
         }
+
+        /* Reaching thread level proves any DPC already active here completed. */
+        ProcessorSet &= ~CurrentSet;
+        if (!ProcessorSet)
+            break;
+
+        KeSetSystemAffinityThread(ProcessorSet);
+        AffinityChanged = TRUE;
     }
 
-    /* Revert back to user affinity */
-    if (KeGetCurrentThread()->SystemAffinityActive)
-    {
+    if (AffinityChanged)
         KeRevertToUserAffinityThread();
-    }
+
+    KeSetPriorityThread(CurrentThread, OldPriority);
 }
 
 /*
