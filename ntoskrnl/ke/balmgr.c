@@ -31,7 +31,7 @@ KiScanReadyQueues(IN PKDPC Dpc,
     ULONG Count = 10, Number = 16;
     PKPRCB Prcb = KiProcessorBlock[ScanIndex];
     ULONG Index = Prcb->QueueIndex;
-    ULONG WaitLimit = KeTickCount.LowPart - 300;
+    ULONG CurrentTick = KeTickCount.LowPart;
     ULONG Summary;
     KIRQL OldIrql;
     PLIST_ENTRY ListHead, NextEntry;
@@ -69,7 +69,7 @@ KiScanReadyQueues(IN PKDPC Dpc,
                     ASSERT(Thread->Priority == Index);
 
                     /* Check if the thread has been waiting too long */
-                    if (WaitLimit >= Thread->WaitTime)
+                    if ((CurrentTick - Thread->WaitTime) >= 300)
                     {
                         /* Remove the thread from the queue */
                         NextEntry = NextEntry->Blink;
