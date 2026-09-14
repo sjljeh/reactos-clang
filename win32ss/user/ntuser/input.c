@@ -387,7 +387,9 @@ RawInputThreadMain(VOID)
         ghKeyboardDevice = NULL;
     }
 
+    ExDeleteResourceLite(gpDeviceInfoListMutex);
     ExFreePoolWithTag(gpDeviceInfoListMutex, USERTAG_SYSTEM);
+    gpDeviceInfoListMutex = NULL;
 
     ERR("Raw Input Thread Exit!\n");
 }
