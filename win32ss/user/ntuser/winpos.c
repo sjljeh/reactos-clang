@@ -1822,7 +1822,9 @@ co_WinPosSetWindowPos(
    RECTL CopyRect;
    PWND Ancestor;
    PWND Child;
+   PDCE_LAYOUT_LOCK LayoutLock = NULL;
    BOOL bPointerInWindow, PosChanged = FALSE, ZOrderChanged = FALSE;
+   BOOL NotifyShow = FALSE;
    BOOL CopyBitsValid = TRUE;
    LONG LayoutGeneration;
    PTHREADINFO pti = PsGetCurrentThreadWin32Thread();
@@ -2017,9 +2019,13 @@ co_WinPosSetWindowPos(
          }
       }
 
+      /* Retire drawing with the old top-level clipping before publication. */
+      if (UserIsDesktopWindow(Window->spwndParent))
+         LayoutLock = DceBeginLayoutLock();
+
       Window->style |= WS_VISIBLE; //IntSetStyle( Window, WS_VISIBLE, 0 );
       Window->head.pti->cVisWindows++;
-      IntNotifyWinEvent(EVENT_OBJECT_SHOW, Window, OBJID_WINDOW, CHILDID_SELF, WEF_SETBYWNDPTI);
+      NotifyShow = TRUE;
    }
    else
    {
@@ -2055,7 +2061,13 @@ co_WinPosSetWindowPos(
                      NewWindowRect.top - OldWindowRect.top);
    }
 
-   DceResetActiveDCEs(Window); // For WS_VISIBLE changes.
+   if (LayoutLock)
+      DceEndLayoutLock(Window, LayoutLock);
+   else
+      DceResetActiveDCEs(Window); // For WS_VISIBLE changes.
+
+   if (NotifyShow)
+      IntNotifyWinEvent(EVENT_OBJECT_SHOW, Window, OBJID_WINDOW, CHILDID_SELF, WEF_SETBYWNDPTI);
 
    // Change or update, set send non-client paint flag.
    if ( Window->style & WS_VISIBLE &&
