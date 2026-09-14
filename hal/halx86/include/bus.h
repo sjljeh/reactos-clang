@@ -437,6 +437,7 @@ HalpPhase0SetPciDataByOffset(
 ULONG
 NTAPI
 HalpGetRootInterruptVector(
+    _In_ INTERFACE_TYPE InterfaceType,
     _In_ ULONG BusInterruptLevel,
     _In_ ULONG BusInterruptVector,
     _Out_ PKIRQL Irql,

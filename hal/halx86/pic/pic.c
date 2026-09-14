@@ -1235,12 +1235,15 @@ HalpDispatchInterrupt2(VOID)
 
 ULONG
 NTAPI
-HalpGetRootInterruptVector(IN ULONG BusInterruptLevel,
+HalpGetRootInterruptVector(IN INTERFACE_TYPE InterfaceType,
+                           IN ULONG BusInterruptLevel,
                            IN ULONG BusInterruptVector,
                            OUT PKIRQL Irql,
                            OUT PKAFFINITY Affinity)
 {
     UCHAR SystemVector;
+
+    UNREFERENCED_PARAMETER(InterfaceType);
 
     /* Validate the IRQ */
     if (BusInterruptLevel > 23)

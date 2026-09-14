@@ -1667,6 +1667,26 @@ acpi_bus_init (void)
 		goto error1;
 	}
 
+	/* Diagnostic SMP bring-up: tell firmware that PCI interrupts are routed
+	 * through the I/O APIC before evaluating PCI link resources. */
+	if (KeNumberProcessors > 1) {
+		ACPI_OBJECT argument;
+		ACPI_OBJECT_LIST arguments;
+
+		argument.Type = ACPI_TYPE_INTEGER;
+		argument.Integer.Value = 1; /* APIC mode */
+		arguments.Count = 1;
+		arguments.Pointer = &argument;
+
+		status = AcpiEvaluateObject(ACPI_ROOT_OBJECT,
+		                            "\\_PIC",
+		                            &arguments,
+		                            NULL);
+		if (ACPI_FAILURE(status))
+			DPRINT1("Unable to switch ACPI PCI routing to APIC mode: %s\n",
+			        AcpiFormatException(status));
+	}
+
 	/*
 	 * Maybe EC region is required at bus_scan/acpi_get_devices. So it
 	 * is necessary to enable it as early as possible.
@@ -1823,4 +1843,3 @@ acpi_exit (void)
 
 	return_VOID;
 }
-

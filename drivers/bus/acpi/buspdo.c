@@ -859,6 +859,172 @@ Bus_PDO_QueryResources(
 
         DPRINT("Found PCI root hub: %d\n", BusNumber);
 
+        {
+            ACPI_BUFFER RoutingBuffer = {ACPI_ALLOCATE_BUFFER, NULL};
+            ACPI_PCI_ROUTING_TABLE *Route;
+
+            AcpiStatus = AcpiGetIrqRoutingTable(DeviceData->AcpiHandle,
+                                                &RoutingBuffer);
+            if (ACPI_SUCCESS(AcpiStatus))
+            {
+                for (Route = RoutingBuffer.Pointer;
+                     Route->Length != 0;
+                     Route = ACPI_ADD_PTR(ACPI_PCI_ROUTING_TABLE,
+                                          Route,
+                                          Route->Length))
+                {
+                    DPRINT1("_PRT bus %I64u device %I64u pin %lu source '%s' index %lu\n",
+                            BusNumber,
+                            Route->Address >> 16,
+                            Route->Pin,
+                            Route->Source,
+                            Route->SourceIndex);
+
+                    /* In APIC mode, _PRT returns direct GSIs. Publish the
+                     * resolved route through the standard PCI InterruptLine
+                     * byte consumed by the current PCI bus driver. */
+                    if (Route->Source[0] == ANSI_NULL &&
+                        BusNumber <= 0xFF &&
+                        (Route->Address >> 16) < PCI_MAX_DEVICES &&
+                        Route->Pin < 4 &&
+                        Route->SourceIndex <= 0xFF)
+                    {
+                        ULONG Device = (ULONG)(Route->Address >> 16);
+                        ULONG Function = (ULONG)(Route->Address & 0xFFFF);
+                        ULONG FirstFunction, LastFunction;
+
+                        if (Function == 0xFFFF)
+                        {
+                            FirstFunction = 0;
+                            LastFunction = PCI_MAX_FUNCTION - 1;
+                        }
+                        else if (Function < PCI_MAX_FUNCTION)
+                        {
+                            FirstFunction = LastFunction = Function;
+                        }
+                        else
+                        {
+                            FirstFunction = 1;
+                            LastFunction = 0;
+                        }
+
+                        for (i = FirstFunction; i <= LastFunction; i++)
+                        {
+                            PCI_SLOT_NUMBER Slot;
+                            USHORT VendorId;
+                            UCHAR Interrupt[2];
+
+                            Slot.u.AsULONG = 0;
+                            Slot.u.bits.DeviceNumber = Device;
+                            Slot.u.bits.FunctionNumber = i;
+
+                            if (HalGetBusDataByOffset(PCIConfiguration,
+                                                      (ULONG)BusNumber,
+                                                      Slot.u.AsULONG,
+                                                      &VendorId,
+                                                      FIELD_OFFSET(PCI_COMMON_CONFIG, VendorID),
+                                                      sizeof(VendorId)) != sizeof(VendorId) ||
+                                VendorId == PCI_INVALID_VENDORID)
+                            {
+                                continue;
+                            }
+
+                            if (HalGetBusDataByOffset(PCIConfiguration,
+                                                      (ULONG)BusNumber,
+                                                      Slot.u.AsULONG,
+                                                      Interrupt,
+                                                      FIELD_OFFSET(PCI_COMMON_CONFIG, u.type0.InterruptLine),
+                                                      sizeof(Interrupt)) != sizeof(Interrupt) ||
+                                Interrupt[1] != Route->Pin + 1)
+                            {
+                                continue;
+                            }
+
+                            Interrupt[0] = (UCHAR)Route->SourceIndex;
+                            HalSetBusDataByOffset(PCIConfiguration,
+                                                  (ULONG)BusNumber,
+                                                  Slot.u.AsULONG,
+                                                  Interrupt,
+                                                  FIELD_OFFSET(PCI_COMMON_CONFIG, u.type0.InterruptLine),
+                                                  sizeof(Interrupt[0]));
+                            DPRINT1("_PRT routed %I64u:%lu.%lu pin %u to GSI %u\n",
+                                    BusNumber,
+                                    Device,
+                                    i,
+                                    Interrupt[1],
+                                    Interrupt[0]);
+                        }
+                    }
+
+                    if (BusNumber == 0 &&
+                        ((Route->Address >> 16) == 26 ||
+                         (Route->Address >> 16) == 29) &&
+                        Route->Source[0] != ANSI_NULL)
+                    {
+                        ACPI_HANDLE LinkHandle;
+                        ACPI_BUFFER LinkBuffer = {ACPI_ALLOCATE_BUFFER, NULL};
+                        ACPI_RESOURCE *LinkResource;
+
+                        AcpiStatus = AcpiGetHandle(NULL,
+                                                   Route->Source,
+                                                   &LinkHandle);
+                        if (ACPI_SUCCESS(AcpiStatus))
+                        {
+                            AcpiStatus = AcpiGetCurrentResources(LinkHandle,
+                                                                 &LinkBuffer);
+                        }
+
+                        if (ACPI_SUCCESS(AcpiStatus))
+                        {
+                            for (LinkResource = LinkBuffer.Pointer;
+                                 LinkResource->Type != ACPI_RESOURCE_TYPE_END_TAG;
+                                 LinkResource = ACPI_NEXT_RESOURCE(LinkResource))
+                            {
+                                if (LinkResource->Type == ACPI_RESOURCE_TYPE_IRQ)
+                                {
+                                    ACPI_RESOURCE_IRQ *Irq = &LinkResource->Data.Irq;
+                                    ULONG j;
+                                    for (j = 0; j < Irq->InterruptCount; j++)
+                                        DPRINT1("_PRT link '%s' IRQ %u trigger %u polarity %u share %u\n",
+                                                Route->Source,
+                                                Irq->Interrupts[j],
+                                                Irq->Triggering,
+                                                Irq->Polarity,
+                                                Irq->Shareable);
+                                }
+                                else if (LinkResource->Type == ACPI_RESOURCE_TYPE_EXTENDED_IRQ)
+                                {
+                                    ACPI_RESOURCE_EXTENDED_IRQ *Irq = &LinkResource->Data.ExtendedIrq;
+                                    ULONG j;
+                                    for (j = 0; j < Irq->InterruptCount; j++)
+                                        DPRINT1("_PRT link '%s' GSI %lu trigger %u polarity %u share %u\n",
+                                                Route->Source,
+                                                Irq->Interrupts[j],
+                                                Irq->Triggering,
+                                                Irq->Polarity,
+                                                Irq->Shareable);
+                                }
+                            }
+                            AcpiOsFree(LinkBuffer.Pointer);
+                        }
+                        else
+                        {
+                            DPRINT1("Unable to resolve _PRT link '%s': %s\n",
+                                    Route->Source,
+                                    AcpiFormatException(AcpiStatus));
+                        }
+                    }
+                }
+                AcpiOsFree(RoutingBuffer.Pointer);
+            }
+            else
+            {
+                DPRINT1("AcpiGetIrqRoutingTable failed for bus %I64u: %s\n",
+                        BusNumber,
+                        AcpiFormatException(AcpiStatus));
+            }
+        }
+
         ResourceListSize = sizeof(CM_RESOURCE_LIST);
         ResourceList = ExAllocatePoolWithTag(PagedPool, ResourceListSize, 'RpcA');
         if (!ResourceList)

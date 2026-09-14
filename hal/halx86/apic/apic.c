@@ -436,6 +436,7 @@ HalpAllocateSystemInterrupt(
 ULONG
 NTAPI
 HalpGetRootInterruptVector(
+    _In_ INTERFACE_TYPE InterfaceType,
     _In_ ULONG BusInterruptLevel,
     _In_ ULONG BusInterruptVector,
     _Out_ PKIRQL OutIrql,
@@ -485,6 +486,26 @@ HalpGetRootInterruptVector(
     }
 
 Exit:
+
+    /* PCI INTx lines are active-low. The generic IOAPIC entry starts active-
+     * high for ISA compatibility, so fix the polarity once a PCI translator
+     * claims this GSI. Do not overwrite firmware/default polarity for other
+     * interface types sharing the vector. */
+    if (InterfaceType == PCIBus)
+    {
+        IOAPIC_REDIRECTION_REGISTER ReDirReg;
+        ULONG_PTR Flags;
+        UCHAR Index = HalpVectorToIndex[Vector];
+
+        if (Index < APIC_MAX_IRQ)
+        {
+            Flags = ApicAcquireIoApicLock();
+            ReDirReg.Long0 = IOApicReadUnlocked(IOAPIC_REDTBL + 2 * Index);
+            ReDirReg.Polarity = 1;
+            IOApicWriteUnlocked(IOAPIC_REDTBL + 2 * Index, ReDirReg.Long0);
+            ApicReleaseIoApicLock(Flags);
+        }
+    }
 
     *OutAffinity = HalpDefaultInterruptAffinity;
     ASSERT(HalpDefaultInterruptAffinity);

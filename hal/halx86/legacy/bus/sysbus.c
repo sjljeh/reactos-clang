@@ -122,7 +122,8 @@ HalpGetSystemInterruptVector(IN PBUS_HANDLER BusHandler,
     ULONG Vector;
 
     /* Get the root vector */
-    Vector = HalpGetRootInterruptVector(BusInterruptLevel,
+    Vector = HalpGetRootInterruptVector(BusHandler->InterfaceType,
+                                        BusInterruptLevel,
                                         BusInterruptVector,
                                         Irql,
                                         Affinity);

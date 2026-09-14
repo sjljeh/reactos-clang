@@ -243,7 +243,8 @@ HalGetInterruptVector(IN INTERFACE_TYPE InterfaceType,
                       OUT PKAFFINITY Affinity)
 {
     /* Call the system bus translator */
-    return HalpGetRootInterruptVector(BusInterruptLevel,
+    return HalpGetRootInterruptVector(InterfaceType,
+                                      BusInterruptLevel,
                                       BusInterruptVector,
                                       Irql,
                                       Affinity);
