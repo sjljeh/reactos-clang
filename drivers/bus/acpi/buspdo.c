@@ -851,6 +851,12 @@ Bus_PDO_QueryResources(
             DPRINT("Using _BBN for bus number\n");
         }
 
+        if (BusNumber > 0xFF)
+        {
+            DPRINT1("Invalid PCI root bus number: %I64u\n", BusNumber);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         DPRINT("Found PCI root hub: %d\n", BusNumber);
 
         ResourceListSize = sizeof(CM_RESOURCE_LIST);
@@ -860,7 +866,7 @@ Bus_PDO_QueryResources(
 
         ResourceList->Count = 1;
         ResourceList->List[0].InterfaceType = Internal;
-        ResourceList->List[0].BusNumber = 0;
+        ResourceList->List[0].BusNumber = (ULONG)BusNumber;
         ResourceList->List[0].PartialResourceList.Version = 1;
         ResourceList->List[0].PartialResourceList.Revision = 1;
         ResourceList->List[0].PartialResourceList.Count = 1;

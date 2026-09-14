@@ -333,6 +333,16 @@ HalpSetPciDataByOffset(
 //
 ULONG64
 NTAPI
+HalpAllocPhysicalMemoryRange(
+    IN PLOADER_PARAMETER_BLOCK LoaderBlock,
+    IN ULONG64 MinAddress,
+    IN ULONG64 MaxAddress,
+    IN PFN_NUMBER PageCount,
+    IN BOOLEAN Aligned
+);
+
+ULONG64
+NTAPI
 HalpAllocPhysicalMemory(
     IN PLOADER_PARAMETER_BLOCK LoaderBlock,
     IN ULONG64 MaxAddress,

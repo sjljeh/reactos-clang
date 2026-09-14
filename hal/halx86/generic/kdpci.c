@@ -563,10 +563,11 @@ HalpSetupPciDeviceForDebugging(
     PageCount = BYTES_TO_PAGES(PciDevice->Memory.Length);
 
     /* Allocate the device context */
-    PhysicalAddress.QuadPart = HalpAllocPhysicalMemory(LoaderBlock,
-                                                       MaxAddress,
-                                                       PageCount,
-                                                       FALSE);
+    PhysicalAddress.QuadPart = HalpAllocPhysicalMemoryRange(LoaderBlock,
+                                                            0x100000,
+                                                            MaxAddress,
+                                                            PageCount,
+                                                            FALSE);
     PciDevice->Memory.Start = PhysicalAddress;
     if (!PhysicalAddress.QuadPart)
     {

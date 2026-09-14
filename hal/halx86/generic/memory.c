@@ -26,18 +26,20 @@ PVOID HalpHeapStart = MM_HAL_HEAP_START;
 
 ULONG64
 NTAPI
-HalpAllocPhysicalMemory(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
-                        IN ULONG64 MaxAddress,
-                        IN PFN_NUMBER PageCount,
-                        IN BOOLEAN Aligned)
+HalpAllocPhysicalMemoryRange(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
+                             IN ULONG64 MinAddress,
+                             IN ULONG64 MaxAddress,
+                             IN PFN_NUMBER PageCount,
+                             IN BOOLEAN Aligned)
 {
     ULONG UsedDescriptors;
     ULONG64 PhysicalAddress;
-    PFN_NUMBER MaxPage, BasePage, Alignment;
+    PFN_NUMBER MinPage, MaxPage, BasePage, Alignment;
     PLIST_ENTRY NextEntry;
     PMEMORY_ALLOCATION_DESCRIPTOR MdBlock, NewBlock, FreeBlock;
 
-    /* Highest page we'll go */
+    /* Lowest and highest pages we'll use */
+    MinPage = (PFN_NUMBER)((MinAddress + PAGE_SIZE - 1) >> PAGE_SHIFT);
     MaxPage = MaxAddress >> PAGE_SHIFT;
 
     /* We need at least two blocks */
@@ -55,24 +57,28 @@ HalpAllocPhysicalMemory(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
                                     MEMORY_ALLOCATION_DESCRIPTOR,
                                     ListEntry);
 
-        /* No alignment by default */
-        Alignment = 0;
+        /* Skip any prefix below the requested minimum address. */
+        BasePage = max(MdBlock->BasePage, MinPage);
+        Alignment = BasePage - MdBlock->BasePage;
 
         /* Unless requested, in which case we use a 64KB block alignment */
-        if (Aligned) Alignment = ((MdBlock->BasePage + 0x0F) & ~0x0F) - MdBlock->BasePage;
+        if (Aligned)
+        {
+            BasePage = (BasePage + 0x0F) & ~0x0F;
+            Alignment = BasePage - MdBlock->BasePage;
+        }
 
         /* Search for free memory */
         if ((MdBlock->MemoryType == LoaderFree) ||
             (MdBlock->MemoryType == LoaderFirmwareTemporary))
         {
             /* Make sure the page is within bounds, including alignment */
-            BasePage = MdBlock->BasePage;
             if ((BasePage) &&
                 (MdBlock->PageCount >= PageCount + Alignment) &&
-                (BasePage + PageCount + Alignment < MaxPage))
+                (BasePage + PageCount < MaxPage))
             {
                 /* We found an address */
-                PhysicalAddress = ((ULONG64)BasePage + Alignment) << PAGE_SHIFT;
+                PhysicalAddress = (ULONG64)BasePage << PAGE_SHIFT;
                 break;
             }
         }
@@ -104,6 +110,7 @@ HalpAllocPhysicalMemory(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
             FreeBlock = &HalpAllocationDescriptorArray[UsedDescriptors];
             FreeBlock->PageCount = MdBlock->PageCount - Alignment - (ULONG)PageCount;
             FreeBlock->BasePage = MdBlock->BasePage + Alignment + (ULONG)PageCount;
+            FreeBlock->MemoryType = MdBlock->MemoryType;
 
             /* One more */
             HalpUsedAllocDescriptors++;
@@ -133,6 +140,20 @@ HalpAllocPhysicalMemory(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
 
     /* Return the address */
     return PhysicalAddress;
+}
+
+ULONG64
+NTAPI
+HalpAllocPhysicalMemory(IN PLOADER_PARAMETER_BLOCK LoaderBlock,
+                        IN ULONG64 MaxAddress,
+                        IN PFN_NUMBER PageCount,
+                        IN BOOLEAN Aligned)
+{
+    return HalpAllocPhysicalMemoryRange(LoaderBlock,
+                                        0,
+                                        MaxAddress,
+                                        PageCount,
+                                        Aligned);
 }
 
 PVOID
@@ -252,4 +273,3 @@ HalpUnmapVirtualAddressVista(IN PVOID VirtualAddress,
     /* Put the heap back */
     if (HalpHeapStart > VirtualAddress) HalpHeapStart = VirtualAddress;
 }
-
