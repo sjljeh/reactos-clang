@@ -260,7 +260,7 @@ GetRawInputDeviceInfoA(
     }
 
     Ret = NtUserGetRawInputDeviceInfo(hDevice, uiCommand, pDataW, &cbSize);
-    if (Ret >= 0 && uiCommand == RIDI_DEVICENAME && pDataW)
+    if (Ret != (UINT)-1 && uiCommand == RIDI_DEVICENAME && pDataW)
     {
         if (WideCharToMultiByte(CP_THREAD_ACP, 0, pDataW, cbSize, pData, *pcbSize, NULL, NULL) == 0)
             Ret = (UINT)-1;
