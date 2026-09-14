@@ -2042,12 +2042,15 @@ IntStretchWallpaper(
             NtGdiSelectBitmap(hSystemBM, hOldBitmap1);
             NtGdiSelectBitmap(hWallpaperDC, hOldBitmap2);
             NtGdiDeleteObjectApp(hWallpaperDC);
-            NtGdiDeleteObjectApp(hBitmap);
+            GreSetBitmapOwner(hBitmap, GDI_OBJ_HMGR_POWNED);
+            GreDeleteObject(hBitmap);
             GreSetBitmapOwner(hNewBitmap, GDI_OBJ_HMGR_PUBLIC);
             return hNewBitmap;
         }
         NtGdiDeleteObjectApp(hWallpaperDC);
     }
+    GreSetBitmapOwner(hBitmap, GDI_OBJ_HMGR_POWNED);
+    GreDeleteObject(hBitmap);
     return NULL;
 }
 
