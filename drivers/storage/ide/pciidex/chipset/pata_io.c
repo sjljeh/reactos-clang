@@ -969,14 +969,6 @@ PataPrepareIo(
     if (IsNEC_98)
         Request->Flags |= REQUEST_FLAG_POLL;
 
-    /* The C610 IDE-R task file is emulated by Intel ME firmware. Poll it so
-     * command completion does not depend on its unreliable INTx delivery. */
-    if ((ChanData->Controller->Pci.VendorID == PCI_VEN_INTEL) &&
-        (ChanData->Controller->Pci.DeviceID == 0x8D3C))
-    {
-        Request->Flags |= REQUEST_FLAG_POLL;
-    }
-
     ChanData->BytesToTransfer = Request->DataTransferLength;
     ChanData->DataBuffer = Request->DataBuffer;
 }
