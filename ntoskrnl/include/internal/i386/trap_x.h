@@ -190,6 +190,9 @@ KiExitSystemCallDebugChecks(IN ULONG SystemCall,
                             IN PKTRAP_FRAME TrapFrame)
 {
     KIRQL OldIrql;
+    PKTHREAD Thread;
+    UCHAR ApcStateIndex;
+    LONG CombinedApcDisable;
 
     /* Check if this was a user call */
     if (KiUserTrap(TrapFrame))
@@ -211,14 +214,17 @@ KiExitSystemCallDebugChecks(IN ULONG SystemCall,
         }
 
         /* Make sure we're not attached and that APCs are not disabled */
-        if ((KeGetCurrentThread()->ApcStateIndex != OriginalApcEnvironment) ||
-            (KeGetCurrentThread()->CombinedApcDisable != 0))
+        Thread = KeGetCurrentThread();
+        ApcStateIndex = Thread->ApcStateIndex;
+        CombinedApcDisable = Thread->CombinedApcDisable;
+        if ((ApcStateIndex != OriginalApcEnvironment) ||
+            (CombinedApcDisable != 0))
         {
             /* Fail */
             KeBugCheckEx(APC_INDEX_MISMATCH,
                          SystemCall,
-                         KeGetCurrentThread()->ApcStateIndex,
-                         KeGetCurrentThread()->CombinedApcDisable,
+                         ApcStateIndex,
+                         CombinedApcDisable,
                          0);
         }
     }
