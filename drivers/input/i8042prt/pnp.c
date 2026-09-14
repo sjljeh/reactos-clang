@@ -307,8 +307,12 @@ i8042ConnectKeyboardInterrupt(
         return Status;
     }
 
-    if (DirqlMax == PortDeviceExtension->KeyboardInterrupt.Dirql)
+    if ((PortDeviceExtension->HighestDIRQLInterrupt == NULL) ||
+        (PortDeviceExtension->KeyboardInterrupt.Dirql >= PortDeviceExtension->HighestDirql))
+    {
         PortDeviceExtension->HighestDIRQLInterrupt = PortDeviceExtension->KeyboardInterrupt.Object;
+        PortDeviceExtension->HighestDirql = PortDeviceExtension->KeyboardInterrupt.Dirql;
+    }
     PortDeviceExtension->Flags |= KEYBOARD_INITIALIZED;
     return STATUS_SUCCESS;
 }
@@ -357,8 +361,12 @@ i8042ConnectMouseInterrupt(
         goto cleanup;
     }
 
-    if (DirqlMax == PortDeviceExtension->MouseInterrupt.Dirql)
+    if ((PortDeviceExtension->HighestDIRQLInterrupt == NULL) ||
+        (PortDeviceExtension->MouseInterrupt.Dirql >= PortDeviceExtension->HighestDirql))
+    {
         PortDeviceExtension->HighestDIRQLInterrupt = PortDeviceExtension->MouseInterrupt.Object;
+        PortDeviceExtension->HighestDirql = PortDeviceExtension->MouseInterrupt.Dirql;
+    }
 
     PortDeviceExtension->Flags |= MOUSE_INITIALIZED;
     Status = STATUS_SUCCESS;
@@ -370,7 +378,11 @@ cleanup:
         if (PortDeviceExtension->MouseInterrupt.Object)
         {
             IoDisconnectInterrupt(PortDeviceExtension->MouseInterrupt.Object);
-            PortDeviceExtension->HighestDIRQLInterrupt = PortDeviceExtension->KeyboardInterrupt.Object;
+            if (PortDeviceExtension->HighestDIRQLInterrupt == PortDeviceExtension->MouseInterrupt.Object)
+            {
+                PortDeviceExtension->HighestDIRQLInterrupt = PortDeviceExtension->KeyboardInterrupt.Object;
+                PortDeviceExtension->HighestDirql = PortDeviceExtension->KeyboardInterrupt.Dirql;
+            }
         }
     }
     return Status;
@@ -481,16 +493,19 @@ StartProcedure(
             WARN_(I8042PRT, "i8042ConnectMouseInterrupt failed: %lx\n", Status);
         }
 
-        /* Start the mouse */
-        Irql = KeAcquireInterruptSpinLock(DeviceExtension->HighestDIRQLInterrupt);
-        /* HACK: the mouse has already been reset in i8042DetectMouse. This second
-           reset prevents some touchpads/mice from working (Dell D531, D600).
-           See CORE-6901 */
-        if (!(i8042HwFlags & FL_INITHACK))
+        if (NT_SUCCESS(Status))
         {
-            i8042IsrWritePort(DeviceExtension, MOU_CMD_RESET, CTRL_WRITE_MOUSE);
+            /* Start the mouse */
+            Irql = KeAcquireInterruptSpinLock(DeviceExtension->HighestDIRQLInterrupt);
+            /* HACK: the mouse has already been reset in i8042DetectMouse. This second
+               reset prevents some touchpads/mice from working (Dell D531, D600).
+               See CORE-6901 */
+            if (!(i8042HwFlags & FL_INITHACK))
+            {
+                i8042IsrWritePort(DeviceExtension, MOU_CMD_RESET, CTRL_WRITE_MOUSE);
+            }
+            KeReleaseInterruptSpinLock(DeviceExtension->HighestDIRQLInterrupt, Irql);
         }
-        KeReleaseInterruptSpinLock(DeviceExtension->HighestDIRQLInterrupt, Irql);
     }
 
     return Status;
