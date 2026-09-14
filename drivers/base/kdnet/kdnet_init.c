@@ -8,6 +8,7 @@
 #include "kdnet.h"
 #include <ndk/haltypes.h>
 #include <ndk/halfuncs.h>
+#include <ndk/inbvfuncs.h>
 #include <reactos/kdnetextensibility.h>
 #include "kdnet_net.h"
 NTSTATUS NTAPI KdDebuggerInitialize0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock);
@@ -341,6 +342,8 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
     PCHAR LoaderOptions = NULL;
     NTSTATUS Status;
 
+    InbvDisplayString("KDNET A: phase 0\r\n");
+
     if (KdNetInitialized)
         return STATUS_SUCCESS;
 
@@ -454,6 +457,7 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
     FrLdrDbgPrint("KdNetInitializeExtensibility Status=%lx\n", Status);
     if (!NT_SUCCESS(Status))
         return Status;
+    InbvDisplayString("KDNET B: extension loaded\r\n");
 
     /* Allocate hardware context and initialize the extension controller */
     if (!g_KdNetExtExports.KdGetHardwareContextSize || !g_KdNetExtExports.KdInitializeController)
@@ -481,6 +485,7 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
 
         if (!NT_SUCCESS(Status))
             return Status;
+        InbvDisplayString("KDNET C: PCI device mapped\r\n");
 
         if (FrLdrDbgPrint)
             FrLdrDbgPrint("kdnet: PCI device Vendor=0x%04x Device=0x%04x Class=0x%02x/0x%02x Bus=%lu Slot=0x%lx\n",
@@ -524,20 +529,6 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
                               READ_REGISTER_ULONG((PULONG)(_va + 0x00)),
                               READ_REGISTER_ULONG((PULONG)(_va + 0x08)),
                               READ_REGISTER_ULONG((PULONG)(_va + 0x10)));
-                /* Device side-effect write test: CTRL.RST (bit 26) is self-clearing
-                 * BY THE NIC. If our write reaches the device it resets and clears
-                 * the bit; if the write is swallowed the bit stays set. Unambiguous
-                 * (a cached mapping would read back our written value with RST set).
-                 * The stub resets the chip itself first, so this is harmless. */
-                WRITE_REGISTER_ULONG((PULONG)(_va + 0x00), 0x04000000);
-                { volatile ULONG _d; for (_d = 0; _d < 2000000; _d++) { } }
-                {
-                    ULONG _ctrl = READ_REGISTER_ULONG((PULONG)(_va + 0x00));
-                    FrLdrDbgPrint("kdnet: CTRL.RST test: CTRL=0x%08lx -> %s\n",
-                                  _ctrl,
-                                  (_ctrl & 0x04000000) ? "RST STUCK (write NOT reaching NIC)"
-                                                       : "RST cleared (writes reach NIC)");
-                }
                 break;
             }
 
@@ -573,6 +564,7 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
         if (FrLdrDbgPrint)
             FrLdrDbgPrint("kdnet: calling KdInitializeController...\n");
         KdNetInitializeCount++;
+        InbvDisplayString("KDNET D: initializing controller\r\n");
         Status = g_KdNetExtExports.KdInitializeController(&g_KdNetSharedData);
         if (FrLdrDbgPrint)
             FrLdrDbgPrint("kdnet: KdInitializeController -> 0x%08lx\n", Status);
@@ -583,6 +575,7 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
                               KdNetHardwareId, KdNetErrorString);
             return Status;
         }
+        InbvDisplayString("KDNET E: controller initialized\r\n");
 
         g_KdNetLinkSpeed = g_KdNetSharedData.LinkSpeed;
         g_KdNetLinkDuplex = g_KdNetSharedData.LinkDuplex;
@@ -610,7 +603,11 @@ KdNetInitializePhase0(_In_opt_ PLOADER_PARAMETER_BLOCK LoaderBlock)
     /* Bring up the network: assign target IP + ARP-resolve the host MAC. This is
      * the transport's first transmit. */
     {
+        InbvDisplayString("KDNET F: initializing network\r\n");
         NTSTATUS netStatus = KdNetInitializeNetwork();
+        InbvDisplayString(NT_SUCCESS(netStatus) ?
+                          "KDNET G: network initialized\r\n" :
+                          "KDNET X: network initialization failed\r\n");
         if (FrLdrDbgPrint)
         {
             PUCHAR hm = KdNetParameters.HostMac.Address;

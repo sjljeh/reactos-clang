@@ -16,11 +16,17 @@
 /* ---- e1000 register offsets (BAR0) ---- */
 #define E1000_CTRL    0x0000
 #define E1000_STATUS  0x0008
+#define E1000_CTRL_EXT 0x0018
 #define E1000_ICR     0x00C0
 #define E1000_IMC     0x00D8
 #define E1000_RCTL    0x0100
 #define E1000_TCTL    0x0400
 #define E1000_TIPG    0x0410
+#define E1000_PBA     0x1000
+#define E1000_PBECCSTS 0x100C
+#define E1000_TXDCTL0 0x3828
+#define E1000_TARC0   0x3840
+#define E1000_TARC1   0x3940
 #define E1000_RDBAL   0x2800
 #define E1000_RDBAH   0x2804
 #define E1000_RDLEN   0x2808
@@ -34,6 +40,8 @@
 #define E1000_MTA     0x5200
 #define E1000_RAL0    0x5400
 #define E1000_RAH0    0x5404
+#define E1000_RFCTL   0x5008
+#define E1000_WUFC    0x5808
 #define E1000_FCAL    0x0028
 #define E1000_FCAH    0x002C
 #define E1000_FCT     0x0030
@@ -70,6 +78,9 @@
 #define E1000_CTRL_FRCSPD   0x00000800   /* force speed */
 #define E1000_CTRL_FRCDPLX  0x00001000   /* force duplex */
 #define E1000_CTRL_RST      0x04000000
+#define E1000_CTRL_MEHE     0x00080000
+#define E1000_CTRL_EXT_RO_DIS 0x00020000
+#define E1000_CTRL_EXT_PHYPDEN 0x00100000
 /* STATUS bits */
 #define E1000_STATUS_FD 0x00000001   /* full duplex */
 #define E1000_STATUS_LU 0x00000002
@@ -87,6 +98,16 @@
 #define E1000_TCTL_PSP 0x00000008
 #define E1000_TCTL_CT  (0x0F << 4)
 #define E1000_TCTL_COLD (0x40 << 12)
+#define E1000_TCTL_RTLC 0x01000000
+#define E1000_TCTL_MULR 0x10000000
+#define E1000_TXDCTL_PCH_REQUIRED (1u << 22)
+#define E1000_TXDCTL_GRAN 0x01000000
+#define E1000_TXDCTL_PTHRESH 31
+#define E1000_TXDCTL_HTHRESH (1u << 8)
+#define E1000_TXDCTL_WTHRESH (1u << 16)
+#define E1000_PBECCSTS_ECC_ENABLE 0x00010000
+#define E1000_RFCTL_NFSW_DIS 0x00000040
+#define E1000_RFCTL_NFSR_DIS 0x00000080
 /* TX descriptor CMD bits */
 #define E1000_TXD_CMD_EOP  0x01
 #define E1000_TXD_CMD_IFCS 0x02
@@ -298,6 +319,55 @@ static BOOLEAN E1kIsIgb(USHORT id)
             id == 0x1F40 || id == 0x1F41 || id == 0x1F45);                       /* I354   */
 }
 
+/* PCH-integrated e1000e controllers may share the MAC with Intel ME/AMT.
+ * A global CTRL.RST disrupts the management connection and also requires the
+ * ICH/PCH-specific PHY and NVM reinitialization sequence to recover. */
+static BOOLEAN E1kIsPch(USHORT id)
+{
+    return (id == 0x153A || id == 0x153B || /* I217 */
+            id == 0x1559 || id == 0x155A || /* I218 */
+            (id >= 0x15A0 && id <= 0x15A3)); /* I218 revisions */
+}
+
+static VOID E1kInitializePchRegisters(PE1000_ADAPTER a)
+{
+    ULONG reg;
+
+    /* Lynx Point/Wildcat Point use a 26 KiB receive partition. */
+    E1kWrite(a, E1000_PBA, 26);
+
+    reg = E1kRead(a, E1000_CTRL_EXT);
+    reg |= (1u << 22) | E1000_CTRL_EXT_PHYPDEN | E1000_CTRL_EXT_RO_DIS;
+    E1kWrite(a, E1000_CTRL_EXT, reg);
+
+    reg = E1kRead(a, E1000_CTRL);
+    reg |= E1000_CTRL_MEHE;
+    E1kWrite(a, E1000_CTRL, reg);
+
+    reg = E1kRead(a, E1000_PBECCSTS);
+    reg |= E1000_PBECCSTS_ECC_ENABLE;
+    E1kWrite(a, E1000_PBECCSTS, reg);
+
+    reg = E1kRead(a, E1000_RFCTL);
+    reg |= E1000_RFCTL_NFSW_DIS | E1000_RFCTL_NFSR_DIS;
+    E1kWrite(a, E1000_RFCTL, reg);
+
+    /* Host wake filtering can stall receive DMA on managed PCH parts. */
+    E1kWrite(a, E1000_WUFC, 0);
+
+    reg = E1kRead(a, E1000_TARC0);
+    reg |= (1u << 23) | (1u << 24) | (1u << 26) | (1u << 27);
+    E1kWrite(a, E1000_TARC0, reg);
+
+    reg = E1kRead(a, E1000_TARC1);
+    if (E1kRead(a, E1000_TCTL) & E1000_TCTL_MULR)
+        reg &= ~(1u << 28);
+    else
+        reg |= (1u << 28);
+    reg |= (1u << 24) | (1u << 26) | (1u << 30);
+    E1kWrite(a, E1000_TARC1, reg);
+}
+
 ULONGLONG E1kPhys(PE1000_ADAPTER a, PVOID Va);
 
 /* ---- descriptor accessors (branch legacy vs igb advanced) ---- */
@@ -453,15 +523,27 @@ E1000InitializeController(PKDNET_SHARED_DATA KdNet)
     off = E1kAlignUp(off + E1000_NUM_TX * E1000_BUF_SIZE, 16);
     a->RxBuffers = base + off;
 
-    /* Mask interrupts, then reset the device. */
+    /* Mask interrupts. Do not globally reset an AMT-shared PCH controller: its
+     * link, PHY and receive address were initialized by firmware and must be
+     * preserved until a complete e1000e PCH reset sequence is implemented. */
     E1kWrite(a, E1000_IMC, 0xFFFFFFFF);
     (void)E1kRead(a, E1000_ICR);
-    E1kWrite(a, E1000_CTRL, E1kRead(a, E1000_CTRL) | E1000_CTRL_RST);
-    KeStallExecutionProcessor(20000);   /* ~20ms for reset to settle */
-
-    /* Re-mask interrupts (reset clears the mask). */
-    E1kWrite(a, E1000_IMC, 0xFFFFFFFF);
-    (void)E1kRead(a, E1000_ICR);
+    if (E1kIsPch(a->DeviceId))
+    {
+        /* Stop firmware-owned DMA before replacing its descriptor rings. */
+        E1kWrite(a, E1000_RCTL, 0);
+        E1kWrite(a, E1000_TCTL, E1000_TCTL_PSP);
+        (void)E1kRead(a, E1000_STATUS); /* flush posted writes */
+        KeStallExecutionProcessor(10000);
+        E1kInitializePchRegisters(a);
+    }
+    else
+    {
+        E1kWrite(a, E1000_CTRL, E1kRead(a, E1000_CTRL) | E1000_CTRL_RST);
+        KeStallExecutionProcessor(20000);   /* ~20ms for reset to settle */
+        E1kWrite(a, E1000_IMC, 0xFFFFFFFF);
+        (void)E1kRead(a, E1000_ICR);
+    }
 
     /* Bring the link up via auto-negotiation; disable flow control.
      * Do NOT force speed/duplex: 1000BASE-T copper MANDATES auto-negotiation and
@@ -470,7 +552,12 @@ E1000InitializeController(PKDNET_SHARED_DATA KdNet)
      * complete a transmit with no link (observed as ARP "sends=0"). Set SLU + ASDE
      * so the MAC adopts whatever speed/duplex the PHY negotiates. Emulators
      * (QEMU/VBox) honor SLU+ASDE as well, so this path is universal. */
-    E1kWrite(a, E1000_CTRL, E1000_CTRL_SLU | E1000_CTRL_ASDE);
+    {
+        ULONG Ctrl = E1kRead(a, E1000_CTRL);
+        Ctrl |= E1000_CTRL_SLU | E1000_CTRL_ASDE;
+        Ctrl &= ~(E1000_CTRL_FRCSPD | E1000_CTRL_FRCDPLX);
+        E1kWrite(a, E1000_CTRL, Ctrl);
+    }
     E1kWrite(a, E1000_FCAL, 0);
     E1kWrite(a, E1000_FCAH, 0);
     E1kWrite(a, E1000_FCT, 0);
@@ -615,13 +702,36 @@ E1000InitializeController(PKDNET_SHARED_DATA KdNet)
         }
         {
             ULONGLONG tphys = E1kPhys(a, a->TxRing);
+            ULONG txdctl;
             E1kWrite(a, E1000_TDBAL, (ULONG)tphys);
             E1kWrite(a, E1000_TDBAH, (ULONG)(tphys >> 32));
             E1kWrite(a, E1000_TDLEN, E1000_NUM_TX * (ULONG)sizeof(E1000_TX_DESC));
             E1kWrite(a, E1000_TDH, 0);
             E1kWrite(a, E1000_TDT, 0);
+            if (E1kIsPch(a->DeviceId))
+            {
+                txdctl = E1000_TXDCTL_PTHRESH |
+                         E1000_TXDCTL_HTHRESH |
+                         E1000_TXDCTL_WTHRESH |
+                         E1000_TXDCTL_GRAN |
+                         E1000_TXDCTL_PCH_REQUIRED;
+                E1kWrite(a, E1000_TXDCTL0, txdctl);
+            }
             E1kWrite(a, E1000_TIPG, 0x00602008);
-            E1kWrite(a, E1000_TCTL, E1000_TCTL_EN | E1000_TCTL_PSP | E1000_TCTL_CT | E1000_TCTL_COLD);
+            if (E1kIsPch(a->DeviceId))
+            {
+                ULONG tctl = E1kRead(a, E1000_TCTL);
+                tctl &= ~E1000_TCTL_CT;
+                tctl |= E1000_TCTL_EN | E1000_TCTL_PSP | E1000_TCTL_CT |
+                        E1000_TCTL_RTLC | E1000_TCTL_MULR;
+                E1kWrite(a, E1000_TCTL, tctl);
+            }
+            else
+            {
+                E1kWrite(a, E1000_TCTL,
+                         E1000_TCTL_EN | E1000_TCTL_PSP |
+                         E1000_TCTL_CT | E1000_TCTL_COLD);
+            }
         }
     }
 

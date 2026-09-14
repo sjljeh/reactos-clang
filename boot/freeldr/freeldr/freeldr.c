@@ -30,6 +30,19 @@ CCHAR FrLdrBootPath[MAX_PATH] = "";
 
 /* FUNCTIONS ******************************************************************/
 
+#if defined(_M_IX86) && !defined(UEFIBOOT)
+static
+VOID
+FrLdrBootMarker(
+    _In_ CHAR Marker)
+{
+    volatile USHORT* const Video = (volatile USHORT*)0xB8000;
+    Video[0] = (0x0F << 8) | (UCHAR)Marker;
+}
+#else
+#define FrLdrBootMarker(Marker) do { } while (0)
+#endif
+
 static
 BOOLEAN
 LoadRosload(
@@ -91,19 +104,25 @@ LaunchSecondStageLoader(VOID)
 
 VOID __cdecl BootMain(IN PCCH CmdLine)
 {
+    FrLdrBootMarker('A');
+
     /* Load the default settings from the command-line */
     LoadSettings(CmdLine);
+    FrLdrBootMarker('B');
 
     /* Debugger pre-initialization */
     DebugInit(BootMgrInfo.DebugString);
+    FrLdrBootMarker('C');
 
     MachInit(CmdLine);
+    FrLdrBootMarker('D');
 
     TRACE("BootMain() called.\n");
 
 #ifndef UEFIBOOT
     /* Check if the CPU is new enough */
     FrLdrCheckCpuCompatibility(); // FIXME: Should be done inside MachInit!
+    FrLdrBootMarker('E');
 #endif
 
     /* UI pre-initialization */
@@ -112,6 +131,7 @@ VOID __cdecl BootMain(IN PCCH CmdLine)
         UiMessageBoxCritical("Unable to initialize UI.");
         goto Quit;
     }
+    FrLdrBootMarker('F');
 
     /* Initialize memory manager */
     if (!MmInitializeMemoryManager())
@@ -119,9 +139,11 @@ VOID __cdecl BootMain(IN PCCH CmdLine)
         UiMessageBoxCritical("Unable to initialize memory manager.");
         goto Quit;
     }
+    FrLdrBootMarker('G');
 
     /* Initialize I/O subsystem */
     FsInit();
+    FrLdrBootMarker('H');
 
     /* Initialize the module list */
     if (!PeLdrInitializeModuleList())
@@ -129,12 +151,14 @@ VOID __cdecl BootMain(IN PCCH CmdLine)
         UiMessageBoxCritical("Unable to initialize module list.");
         goto Quit;
     }
+    FrLdrBootMarker('I');
 
     if (!MachInitializeBootDevices())
     {
         UiMessageBoxCritical("Error when detecting hardware.");
         goto Quit;
     }
+    FrLdrBootMarker('J');
 
     /* Launch second stage loader */
     if (LaunchSecondStageLoader() != ESUCCESS)

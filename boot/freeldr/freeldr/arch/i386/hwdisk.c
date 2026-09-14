@@ -339,8 +339,15 @@ EnumerateHarddisks(OUT PBOOLEAN BootDriveReported)
      * changed then we fail anyway.
      */
     memset(DiskReadBuffer, 0xcd, DiskReadBufferSize);
-    while (MachDiskReadLogicalSectors(DriveNumber, 0ULL, 1, DiskReadBuffer))
+    for (;;)
     {
+        static const CHAR Hex[] = "0123456789ABCDEF";
+        MachVideoPutChar(Hex[DriveNumber >> 4], 0x0F, 1, 0);
+        MachVideoPutChar(Hex[DriveNumber & 0x0F], 0x0F, 2, 0);
+
+        if (!MachDiskReadLogicalSectors(DriveNumber, 0ULL, 1, DiskReadBuffer))
+            break;
+
         Changed = FALSE;
         for (i = 0; !Changed && i < DiskReadBufferSize; i++)
         {
@@ -441,10 +448,27 @@ PcInitializeBootDevices(VOID)
     BOOLEAN BootDriveReported = FALSE;
     CONFIGURATION_TYPE DriveType;
 
-    DiskCount = EnumerateHarddisks(&BootDriveReported);
+    MachVideoPutChar('K', 0x0F, 0, 0);
+    if (FrldrBootPartition == 0xFF)
+    {
+        /* Diagnostic IDER workaround: this firmware hangs on the first INT 13h
+         * read of drive 0x80 while an IDE-redirection CD is active. */
+        DiskCount = 0;
+        PcBiosDiskCount = 0;
+    }
+    else
+    {
+        DiskCount = EnumerateHarddisks(&BootDriveReported);
+    }
+    MachVideoPutChar('L', 0x0F, 0, 0);
 
     /* Initialize FrLdrBootPath, the path FreeLoader starts from */
-    DiskGetBootPath(PxeInit(), &DriveType);
+    {
+        BOOLEAN Pxe = PxeInit();
+        MachVideoPutChar('M', 0x0F, 0, 0);
+        DiskGetBootPath(Pxe, &DriveType);
+    }
+    MachVideoPutChar('N', 0x0F, 0, 0);
 
     /* Add it, if it's a floppy or CD-ROM */
     if ((FrldrBootDrive >= FIRST_BIOS_DISK && !BootDriveReported) ||
@@ -453,8 +477,10 @@ PcInitializeBootDevices(VOID)
         ARC_STATUS Status;
 
         DiskReportError(FALSE);
+        MachVideoPutChar('O', 0x0F, 0, 0);
         Status = DiskInitialize(FrldrBootDrive, FrLdrBootPath, DriveType,
                                 &DiskVtbl, NULL, NULL, NULL);
+        MachVideoPutChar('P', 0x0F, 0, 0);
         DiskReportError(TRUE);
 
         if (Status == ESUCCESS)
