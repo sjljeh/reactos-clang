@@ -286,8 +286,6 @@ BOOL DDOffscreenBufferTest(GUID *lpDevice, HWND hWnd, BOOL Fullscreen){
     /* set our timers, TimerID - for test timeout, TimerIDUpdate - for frame updating */
     TimerID = SetTimer(hWnd, -1, (UINT)TEST_DURATION, NULL);
     TimerIDUpdate = SetTimer(hWnd, 2, (UINT)10, NULL);
-    (void)TimerIDUpdate;
-
     while (TRUE)
     {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -308,10 +306,10 @@ BOOL DDOffscreenBufferTest(GUID *lpDevice, HWND hWnd, BOOL Fullscreen){
         }
     }
 
+    KillTimer(hWnd, TimerIDUpdate);
+    KillTimer(hWnd, TimerID);
+    lpDDBackBuffer->lpVtbl->Release(lpDDBackBuffer);
     lpDDPrimarySurface->lpVtbl->Release(lpDDPrimarySurface);
-    /* backbuffer is released automatically when in fullscreen */
-    if(!Fullscreen)
-        lpDDBackBuffer->lpVtbl->Release(lpDDBackBuffer);
     lpDD->lpVtbl->Release(lpDD);
 
 return TRUE;
@@ -341,7 +339,11 @@ VOID DDUpdateFrame(LPDIRECTDRAWSURFACE lpDDPrimarySurface ,LPDIRECTDRAWSURFACE l
         rct.bottom = *posY+DD_SQUARE_SIZE;
 
         WhiteBrush = CreateSolidBrush(RGB(255,255,255));
-        FillRect(hdc, &rct, WhiteBrush);
+        if (WhiteBrush)
+        {
+            FillRect(hdc, &rct, WhiteBrush);
+            DeleteObject(WhiteBrush);
+        }
 
         if(*posX >= (DD_TEST_WIDTH - DD_SQUARE_SIZE)) *gainX = -(*gainX);
         if(*posY >= (DD_TEST_HEIGHT - DD_SQUARE_SIZE)) *gainY = -(*gainY);
