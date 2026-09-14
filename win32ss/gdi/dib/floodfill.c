@@ -36,14 +36,28 @@ typedef struct _floodInfo
 
 static __inline BOOL initFlood(FLOODINFO *info, RECTL *DstRect)
 {
-  ULONG width = DstRect->right - DstRect->left;
-  ULONG height = DstRect->bottom - DstRect->top;
-  info->floodData = ExAllocatePoolWithTag(NonPagedPool, width * height * sizeof(FLOODITEM), TAG_DIB);
+  ULONG width, height, pixelCount;
+
+  if ((DstRect->right <= DstRect->left) ||
+      (DstRect->bottom <= DstRect->top))
+  {
+    return FALSE;
+  }
+
+  width = DstRect->right - DstRect->left;
+  height = DstRect->bottom - DstRect->top;
+  if ((width > MAXULONG / height) ||
+      ((pixelCount = width * height) > MAXULONG / sizeof(FLOODITEM)))
+  {
+    return FALSE;
+  }
+
+  info->floodData = ExAllocatePoolWithTag(NonPagedPool, pixelCount * sizeof(FLOODITEM), TAG_DIB);
   if (info->floodData == NULL)
   {
     return FALSE;
   }
-  info->floodStart = info->floodData + (width * height);
+  info->floodStart = info->floodData + pixelCount;
   DPRINT("Allocated flood stack from %p to %p\n", info->floodData, info->floodStart);
   return TRUE;
 }
