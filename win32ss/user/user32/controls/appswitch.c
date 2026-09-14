@@ -336,10 +336,10 @@ void ProcessMouseMessage(UINT message, LPARAM lParam)
    }
 
    selectedWindow = (yIndex*nCols) + xIndex;
-   if (message == WM_MOUSEMOVE)
-   {
-      InvalidateRect(switchdialog, NULL, TRUE);
-      //RedrawWindow(switchdialog, NULL, NULL, 0);
+    if (message == WM_MOUSEMOVE)
+    {
+       InvalidateRect(switchdialog, NULL, TRUE);
+       UpdateWindow(switchdialog);
    }
    else
    {
@@ -531,8 +531,8 @@ BOOL ProcessHotKey(VOID)
 
       TRACE("[ATbot] HotKey Received. Opening window.\n");
       ShowWindow(switchdialog, SW_SHOWNORMAL);
-      UpdateWindow(switchdialog);
       SwitchToThisWindow(switchdialog, TRUE);
+      UpdateWindow(switchdialog);
       isOpen = TRUE;
    }
    else
@@ -540,6 +540,7 @@ BOOL ProcessHotKey(VOID)
       TRACE("[ATbot] HotKey Received  Rotating.\n");
       selectedWindow = (selectedWindow + 1)%windowCount;
       InvalidateRect(switchdialog, NULL, TRUE);
+      UpdateWindow(switchdialog);
    }
    return TRUE;
 }
@@ -587,12 +588,14 @@ static void MoveLeft(void)
     if (selectedWindow < 0)
         selectedWindow = windowCount - 1;
     InvalidateRect(switchdialog, NULL, TRUE);
+    UpdateWindow(switchdialog);
 }
 
 static void MoveRight(void)
 {
     selectedWindow = (selectedWindow + 1) % windowCount;
     InvalidateRect(switchdialog, NULL, TRUE);
+    UpdateWindow(switchdialog);
 }
 
 static void MoveUp(void)
@@ -608,6 +611,7 @@ static void MoveUp(void)
     if (selectedWindow >= windowCount)
         selectedWindow = windowCount - 1;
     InvalidateRect(switchdialog, NULL, TRUE);
+    UpdateWindow(switchdialog);
 }
 
 static void MoveDown(void)
@@ -623,6 +627,7 @@ static void MoveDown(void)
     if (selectedWindow >= windowCount)
         selectedWindow = windowCount - 1;
     InvalidateRect(switchdialog, NULL, TRUE);
+    UpdateWindow(switchdialog);
 }
 
 VOID
