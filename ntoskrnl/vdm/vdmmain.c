@@ -71,9 +71,11 @@ KeI386VdmInitialize(VOID)
     if (!NT_SUCCESS(Status))
     {
         /* Not present, so check if the CPU supports VME */
-        if (KeGetPcr()->Prcb->FeatureBits & KF_V86_VIS)
+        if ((KeNumberProcessors == 1) &&
+            (KeGetPcr()->Prcb->FeatureBits & KF_V86_VIS))
         {
-            /* Enable them. FIXME: Use IPI */
+            /* VME is per-processor. Keep it disabled on MP systems until the
+             * enable and disable paths update every active processor. */
             Ki386VdmEnablePentiumExtentions(TRUE);
             KeI386VirtualIntExtensions = TRUE;
         }
