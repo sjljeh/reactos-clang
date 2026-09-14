@@ -743,10 +743,17 @@ DC_vLockPdevForDraw(
         pdcOwner->flDrawLock = DC_DRAWLOCK_ACTIVE | DC_DRAWLOCK_TILED;
     }
 
-    if (pdcWrite && (ppdev->pSurface != pdcWrite->dclevel.pSurface))
+    if (pdcWrite &&
+        ((ppdev->pSurface != pdcWrite->dclevel.pSurface) ||
+         (ppdev->pSurface->SurfObj.sizlBitmap.cx != pdcWrite->dclevel.sizl.cx) ||
+         (ppdev->pSurface->SurfObj.sizlBitmap.cy != pdcWrite->dclevel.sizl.cy)))
+    {
         DC_vUpdateDC(pdcWrite);
+    }
     if (pdcRead && (pdcRead != pdcWrite) &&
-        (ppdev->pSurface != pdcRead->dclevel.pSurface))
+        ((ppdev->pSurface != pdcRead->dclevel.pSurface) ||
+         (ppdev->pSurface->SurfObj.sizlBitmap.cx != pdcRead->dclevel.sizl.cx) ||
+         (ppdev->pSurface->SurfObj.sizlBitmap.cy != pdcRead->dclevel.sizl.cy)))
     {
         DC_vUpdateDC(pdcRead);
     }
