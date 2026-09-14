@@ -29,6 +29,11 @@ IntCbAllocateMemory(ULONG Size)
    PINT_CALLBACK_HEADER Mem;
    PTHREADINFO W32Thread;
 
+   if (Size > MAXULONG - sizeof(INT_CALLBACK_HEADER))
+   {
+      return NULL;
+   }
+
    if(!(Mem = ExAllocatePoolWithTag(PagedPool, Size + sizeof(INT_CALLBACK_HEADER),
                                     USERTAG_CALLBACK)))
    {
