@@ -356,17 +356,21 @@ void OnPaint(HWND hWnd)
     int i, xPos, yPos, CharCount;
     HFONT dcFont;
     HICON hIcon;
-    HPEN hPen;
+    HPEN hPen, hOldPen;
+    HBRUSH hOldBrush;
     COLORREF Color;
-
-    // check
-    if (nCols == 0 || nItems == 0)
-        return;
 
     // begin painting
     dialogDC = BeginPaint(hWnd, &paint);
     if (dialogDC == NULL)
         return;
+
+    // check
+    if (nCols == 0 || nItems == 0)
+    {
+        EndPaint(hWnd, &paint);
+        return;
+    }
 
     // fill the client area
     GetClientRect(hWnd, &cRC);
@@ -402,14 +406,19 @@ void OnPaint(HWND hWnd)
             hPen = CreatePen(PS_SOLID, 1, Color);
 
             // draw a rectangle with using the pen
-            SelectObject(dialogDC, hPen);
-            SelectObject(dialogDC, GetStockObject(NULL_BRUSH));
-            Rectangle(dialogDC, xPos, yPos, xPos + CX_ITEM, yPos + CY_ITEM);
-            Rectangle(dialogDC, xPos + 1, yPos + 1,
-                                xPos + CX_ITEM - 1, yPos + CY_ITEM - 1);
+            if (hPen)
+            {
+                hOldPen = SelectObject(dialogDC, hPen);
+                hOldBrush = SelectObject(dialogDC, GetStockObject(NULL_BRUSH));
+                Rectangle(dialogDC, xPos, yPos, xPos + CX_ITEM, yPos + CY_ITEM);
+                Rectangle(dialogDC, xPos + 1, yPos + 1,
+                                    xPos + CX_ITEM - 1, yPos + CY_ITEM - 1);
+                SelectObject(dialogDC, hOldBrush);
+                SelectObject(dialogDC, hOldPen);
 
-            // delete the pen
-            DeleteObject(hPen);
+                // delete the pen
+                DeleteObject(hPen);
+            }
         }
 
         // draw icon
