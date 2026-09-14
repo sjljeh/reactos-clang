@@ -118,18 +118,28 @@ static BOOL BezierCheck( int level, POINT *Points)
 /* Helper for GDI_Bezier.
  * Just handles one Bezier, so Points should point to four POINTs
  */
-static void GDI_InternalBezier( POINT *Points, POINT **PtsOut, INT *dwOut,
+static BOOL GDI_InternalBezier( POINT *Points, POINT **PtsOut, INT *dwOut,
 				INT *nPtsOut, INT level )
 {
     if(*nPtsOut == *dwOut) {
-        *dwOut *= 2;
-        *PtsOut = ExAllocatePoolWithTag(PagedPool, *dwOut * sizeof(POINT), TAG_BEZIER);
-        if (*PtsOut == NULL)
+        INT dwNew;
+        POINT *PtsNew;
+
+        if ((*dwOut > MAXLONG / 2) ||
+            ((ULONG)*dwOut > MAXULONG / (2 * sizeof(POINT))))
+            return FALSE;
+
+        dwNew = *dwOut * 2;
+        PtsNew = ExAllocatePoolWithTag(PagedPool, dwNew * sizeof(POINT), TAG_BEZIER);
+        if (PtsNew == NULL)
         {
-            /// \todo FIXME!
-            NT_ASSERT(FALSE);
-            return;
+            return FALSE;
         }
+
+        RtlCopyMemory(PtsNew, *PtsOut, *nPtsOut * sizeof(POINT));
+        ExFreePoolWithTag(*PtsOut, TAG_BEZIER);
+        *PtsOut = PtsNew;
+        *dwOut = dwNew;
     }
 
     if(!level || BezierCheck(level, Points)) {
@@ -139,8 +149,9 @@ static void GDI_InternalBezier( POINT *Points, POINT **PtsOut, INT *dwOut,
             *nPtsOut = 1;
         }
 	(*PtsOut)[*nPtsOut].x = BEZIERSHIFTDOWN(Points[3].x);
-        (*PtsOut)[*nPtsOut].y = BEZIERSHIFTDOWN(Points[3].y);
+	(*PtsOut)[*nPtsOut].y = BEZIERSHIFTDOWN(Points[3].y);
         (*nPtsOut) ++;
+        return TRUE;
     } else {
         POINT Points2[4]; /* for the second recursive call */
         Points2[3]=Points[3];
@@ -155,8 +166,9 @@ static void GDI_InternalBezier( POINT *Points, POINT **PtsOut, INT *dwOut,
         Points2[0]=Points[3];
 
         /* do the two halves */
-        GDI_InternalBezier(Points, PtsOut, dwOut, nPtsOut, level-1);
-        GDI_InternalBezier(Points2, PtsOut, dwOut, nPtsOut, level-1);
+        if (!GDI_InternalBezier(Points, PtsOut, dwOut, nPtsOut, level-1))
+            return FALSE;
+        return GDI_InternalBezier(Points2, PtsOut, dwOut, nPtsOut, level-1);
     }
 }
 
@@ -191,7 +203,7 @@ POINT *GDI_Bezier( const POINT *Points, INT count, INT *nPtsOut )
     POINT *out;
     INT Bezier, dwOut = BEZIER_INITBUFSIZE, i;
 
-    if (count == 1 || (count - 1) % 3 != 0) {
+    if (count < 4 || (count - 1) % 3 != 0) {
         DPRINT1("Invalid no. of points %d\n", count);
 	return NULL;
     }
@@ -207,7 +219,11 @@ POINT *GDI_Bezier( const POINT *Points, INT count, INT *nPtsOut )
 	    ptBuf[i].x = BEZIERSHIFTUP(ptBuf[i].x);
 	    ptBuf[i].y = BEZIERSHIFTUP(ptBuf[i].y);
 	}
-        GDI_InternalBezier( ptBuf, &out, &dwOut, nPtsOut, BEZIERMAXDEPTH );
+        if (!GDI_InternalBezier(ptBuf, &out, &dwOut, nPtsOut, BEZIERMAXDEPTH))
+        {
+            ExFreePoolWithTag(out, TAG_BEZIER);
+            return NULL;
+        }
     }
     DPRINT("Produced %d points\n", *nPtsOut);
     return out;
