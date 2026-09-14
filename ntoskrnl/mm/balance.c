@@ -345,11 +345,6 @@ MmRequestPageMemoryConsumer(ULONG Consumer, BOOLEAN CanWait,
 }
 
 VOID
-CcRosTrimCache(
-    _In_ ULONG Target,
-    _Out_ PULONG NrFreed);
-
-VOID
 NTAPI
 MiBalancerThread(PVOID Unused)
 {
@@ -374,8 +369,6 @@ MiBalancerThread(PVOID Unused)
         if (Status == STATUS_WAIT_0 || Status == STATUS_WAIT_1)
         {
             ULONG InitialTarget = 0;
-            ULONG Target;
-            ULONG NrFreedPages;
 
             do
             {
@@ -385,24 +378,6 @@ MiBalancerThread(PVOID Unused)
                 for (ULONG i = 0; i < MC_MAXIMUM; i++)
                 {
                     InitialTarget = MiTrimMemoryConsumer(i, InitialTarget);
-                }
-
-                /*
-                 * Trim the cache only for an unmet request or an actual page
-                 * shortage.  Taking the absolute difference here makes an
-                 * otherwise idle system ask CC to evict almost every available
-                 * page every two seconds.
-                 */
-                Target = InitialTarget;
-                if (MmAvailablePages < MiMinimumAvailablePages)
-                {
-                    Target = max(Target,
-                                 MiMinimumAvailablePages - MmAvailablePages);
-                }
-                if (Target)
-                {
-                    CcRosTrimCache(Target, &NrFreedPages);
-                    InitialTarget -= min(NrFreedPages, InitialTarget);
                 }
 
                 /* No pages left to swap! */
