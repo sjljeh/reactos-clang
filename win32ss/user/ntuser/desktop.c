@@ -1885,7 +1885,8 @@ IntCalcWallpaperCoordinates(
         int scaleNum, scaleDen;
 
         /* Precision improvement over ((sz.cx / gspv.cxWallpaper) > (sz.cy / gspv.cyWallpaper)) */
-        if ((szDesk.cx * gspv.cyWallpaper) > (szDesk.cy * gspv.cxWallpaper))
+        if (((LONGLONG)szDesk.cx * gspv.cyWallpaper) >
+            ((LONGLONG)szDesk.cy * gspv.cxWallpaper))
         {
             if (gspv.WallpaperMode == wmFit)
             {
@@ -1964,15 +1965,12 @@ IntCalcWallpaperCoordinates(
     }
     else if (gspv.WallpaperMode == wmFill)
     {
-        int wallpaperX = (((scaledWidth - szDesk.cx) * gspv.cxWallpaper) / (2 * scaledWidth));
-        int wallpaperY = (((scaledHeight - szDesk.cy) * gspv.cyWallpaper) / (2 * scaledHeight));
-
         szSrc.cx = EngMulDiv(gspv.cxWallpaper, szDesk.cx, scaledWidth);
         szSrc.cy = EngMulDiv(gspv.cyWallpaper, szDesk.cy, scaledHeight);
         szDst.cx = szDesk.cx;
         szDst.cy = szDesk.cy;
-        ptSrc.x = wallpaperX;
-        ptSrc.y = wallpaperY;
+        ptSrc.x = (gspv.cxWallpaper - szSrc.cx) / 2;
+        ptSrc.y = (gspv.cyWallpaper - szSrc.cy) / 2;
     }
     else if (gspv.WallpaperMode == wmCenter)
     {
