@@ -1100,9 +1100,13 @@ NtGdiGradientFill(
     {
         case GRADIENT_FILL_RECT_H:
         case GRADIENT_FILL_RECT_V:
+            if (nMesh > MAXULONG / sizeof(GRADIENT_RECT))
+                return FALSE;
             cbMesh = nMesh * sizeof(GRADIENT_RECT);
             break;
         case GRADIENT_FILL_TRIANGLE:
+            if (nMesh > MAXULONG / sizeof(GRADIENT_TRIANGLE))
+                return FALSE;
             cbMesh = nMesh * sizeof(GRADIENT_TRIANGLE);
             break;
         default:
@@ -1110,11 +1114,14 @@ NtGdiGradientFill(
             return FALSE;
     }
 
-    cbVertex = nVertex * sizeof(TRIVERTEX) ;
-    if(cbVertex + cbMesh <= cbVertex)
+    if (nVertex > MAXULONG / sizeof(TRIVERTEX))
+        return FALSE;
+
+    cbVertex = nVertex * sizeof(TRIVERTEX);
+    if (cbVertex > MAXULONG - cbMesh)
     {
         /* Overflow */
-        return FALSE ;
+        return FALSE;
     }
 
     /* Allocate a kernel mode buffer */
