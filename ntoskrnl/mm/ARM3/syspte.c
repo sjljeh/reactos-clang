@@ -231,9 +231,11 @@ MiReserveAlignedSystemPtes(IN ULONG NumberOfPtes,
     KeReleaseQueuedSpinLock(LockQueueSystemSpaceLock, OldIrql);
 
     //
-    // Flush the TLB
+    // System PTEs map global kernel addresses and may have last been used by
+    // another processor. Flush global translations on every processor before
+    // handing the range out again.
     //
-    KeFlushProcessTb();
+    KeFlushEntireTb(TRUE, TRUE);
 
     //
     // Return the reserved PTEs
