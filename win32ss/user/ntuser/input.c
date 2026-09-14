@@ -25,7 +25,8 @@ PATTACHINFO gpai = NULL;
 INT paiCount = 0;
 HANDLE ghKeyboardDevice = NULL;
 PINPUT_DEVICE_INFO gpInputDeviceInfo = NULL;
-PERESOURCE gpDeviceInfoListMutex = NULL;
+static ERESOURCE DeviceInfoListResource;
+PERESOURCE gpDeviceInfoListMutex = &DeviceInfoListResource;
 
 static DWORD LastInputTick = 0;
 static HANDLE ghMouseDevice;
@@ -194,11 +195,6 @@ RawInputThreadMain(VOID)
         /* Failed to open the interactive winsta! What now? */
     }
 
-    gpDeviceInfoListMutex = ExAllocatePoolWithTag(NonPagedPool, sizeof(*gpDeviceInfoListMutex), USERTAG_SYSTEM);
-    ASSERT(gpDeviceInfoListMutex);
-    Status = ExInitializeResourceLite(gpDeviceInfoListMutex);
-    ASSERT(NT_SUCCESS(Status));
-
     UserEnterExclusive();
     StartTheTimers();
     UserLeave();
@@ -217,8 +213,10 @@ RawInputThreadMain(VOID)
             {
                 ++cMaxWaitObjects;
                 TRACE("Mouse connected!\n");
+                AcquireDeviceInfoListMutex();
                 Mouse.pNextDeviceInfo = gpInputDeviceInfo;
                 gpInputDeviceInfo = &Mouse;
+                ReleaseDeviceInfoListMutex();
             }
         }
         if (!ghKeyboardDevice)
@@ -229,8 +227,10 @@ RawInputThreadMain(VOID)
             {
                 ++cMaxWaitObjects;
                 TRACE("Keyboard connected!\n");
+                AcquireDeviceInfoListMutex();
                 Keyboard.pNextDeviceInfo = gpInputDeviceInfo;
                 gpInputDeviceInfo = &Keyboard;
+                ReleaseDeviceInfoListMutex();
                 // Get and load keyboard attributes.
                 UserInitKeyboard(ghKeyboardDevice);
                 Keyboard.Keyboard.Attributes = gKeyboardInfo;
@@ -387,9 +387,9 @@ RawInputThreadMain(VOID)
         ghKeyboardDevice = NULL;
     }
 
-    ExDeleteResourceLite(gpDeviceInfoListMutex);
-    ExFreePoolWithTag(gpDeviceInfoListMutex, USERTAG_SYSTEM);
-    gpDeviceInfoListMutex = NULL;
+    AcquireDeviceInfoListMutex();
+    gpInputDeviceInfo = NULL;
+    ReleaseDeviceInfoListMutex();
 
     ERR("Raw Input Thread Exit!\n");
 }
@@ -404,6 +404,12 @@ NTSTATUS
 NTAPI
 InitInputImpl(VOID)
 {
+    NTSTATUS Status;
+
+    Status = ExInitializeResourceLite(gpDeviceInfoListMutex);
+    if (!NT_SUCCESS(Status))
+        return Status;
+
     MasterTimer = ExAllocatePoolWithTag(NonPagedPool, sizeof(KTIMER), USERTAG_SYSTEM);
     if (!MasterTimer)
     {
