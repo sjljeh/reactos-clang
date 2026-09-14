@@ -413,8 +413,14 @@ FORCEINLINE
 PRKTHREAD
 KeGetCurrentThread(VOID)
 {
-    /* Return the current thread */
-    return ((PKIPCR)KeGetPcr())->PrcbData.CurrentThread;
+    /*
+     * Read the embedded PRCB's current thread directly through FS.  Loading
+     * the PCR pointer first is not safe at a preemptible IRQL: the thread can
+     * migrate before the second load and then dereference its old processor's
+     * PRCB.
+     */
+    return (PRKTHREAD)(ULONG_PTR)__readfsdword(
+        FIELD_OFFSET(KIPCR, PrcbData) + FIELD_OFFSET(KPRCB, CurrentThread));
 }
 
 FORCEINLINE
