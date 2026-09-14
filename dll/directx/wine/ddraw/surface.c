@@ -70,8 +70,11 @@ HRESULT ddraw_surface_update_frontbuffer(struct ddraw_surface *surface, const RE
         if (read)
             return DD_OK;
 
+        /* Frontbuffer publication must complete before DirectDraw lets the
+         * caller modify a surface that may be reused for the next frame. */
         return wined3d_texture_blt(ddraw->wined3d_frontbuffer, 0, rect,
-                surface->wined3d_texture, surface->sub_resource_idx, rect, 0, NULL, WINED3D_TEXF_POINT);
+                surface->wined3d_texture, surface->sub_resource_idx, rect,
+                WINED3D_BLT_SYNCHRONOUS, NULL, WINED3D_TEXF_POINT);
     }
 
     if (FAILED(hr = wined3d_texture_get_dc(surface->wined3d_texture, surface->sub_resource_idx, &surface_dc)))
