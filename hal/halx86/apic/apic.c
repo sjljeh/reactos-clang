@@ -875,9 +875,17 @@ HalBeginSystemInterrupt(
             /* Read the I/O redirection entry */
             RedirReg = ApicReadIORedirectionEntry(Index);
 
-            /* Re-request the interrupt to be handled later */
-            ApicRequestSelfInterrupt(Vector, (UCHAR)RedirReg.TriggerMode);
-       }
+            /* A level-triggered source remains asserted until its ISR clears
+             * it. After the EOI above, the I/O APIC will therefore redeliver
+             * the real interrupt and hold it pending behind the raised TPR.
+             * Do not replace it with an edge-triggered self-IPI: if both
+             * requests combine, the TMR can retain edge state and the later
+             * EOI will not clear the I/O APIC's Remote IRR. */
+            if (RedirReg.TriggerMode == APIC_TGM_Edge)
+            {
+                ApicRequestSelfInterrupt(Vector, APIC_TGM_Edge);
+            }
+        }
        else
        {
             /* This should be a reserved vector! */
