@@ -35,6 +35,8 @@ PPATH FASTCALL
 PATH_CreatePath(int count)
 {
     PPATH pPath = PATH_AllocPathWithHandle();
+    POINT *pPoints;
+    BYTE *pFlags;
 
     if (!pPath)
     {
@@ -51,13 +53,23 @@ PATH_CreatePath(int count)
     PATH_EmptyPath(pPath);
 
     count = max( NUM_ENTRIES_INITIAL, count );
+    if ((ULONG)count > MAXULONG / sizeof(POINT))
+        goto Failure;
 
+    pPoints = ExAllocatePoolZero(PagedPool, count * sizeof(POINT), TAG_PATH);
+    if (!pPoints)
+        goto Failure;
+
+    pFlags = ExAllocatePoolZero(PagedPool, count * sizeof(BYTE), TAG_PATH);
+    if (!pFlags)
+    {
+        ExFreePoolWithTag(pPoints, TAG_PATH);
+        goto Failure;
+    }
+
+    pPath->pPoints = pPoints;
+    pPath->pFlags = pFlags;
     pPath->numEntriesAllocated = count;
-
-    pPath->pPoints = (POINT *)ExAllocatePoolWithTag(PagedPool, count * sizeof(POINT), TAG_PATH);
-    RtlZeroMemory( pPath->pPoints, count * sizeof(POINT));
-    pPath->pFlags  =  (BYTE *)ExAllocatePoolWithTag(PagedPool, count * sizeof(BYTE),  TAG_PATH);
-    RtlZeroMemory( pPath->pFlags, count * sizeof(BYTE));
 
     /* Initialize variables for new path */
     pPath->numEntriesUsed = 0;
@@ -69,6 +81,11 @@ PATH_CreatePath(int count)
     TRACE("Create Path %d\n",PathCount);
 #endif
     return pPath;
+
+Failure:
+    GDIOBJ_vDeleteObject(&pPath->BaseObject);
+    EngSetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    return NULL;
 }
 
 /* PATH_DestroyGdiPath
@@ -187,53 +204,95 @@ PATH_AssignGdiPath(
 BOOL PATH_SavePath( DC *dst, DC *src )
 {
     PPATH pdstPath, psrcPath = PATH_LockPath(src->dclevel.hPath);
+    HPATH hPath;
+
     TRACE("PATH_SavePath\n");
-    if (psrcPath)
+    if (!psrcPath)
+        return FALSE;
+
+    TRACE("PATH_SavePath 1\n");
+
+    pdstPath = PATH_CreatePath(psrcPath->numEntriesAllocated);
+    if (!pdstPath)
     {
-       TRACE("PATH_SavePath 1\n");
-
-       pdstPath = PATH_CreatePath(psrcPath->numEntriesAllocated);
-
-       dst->dclevel.flPath = src->dclevel.flPath;
-
-       dst->dclevel.hPath = pdstPath->BaseObject.hHmgr;
-
-       PATH_AssignGdiPath(pdstPath, psrcPath);
-
-       PATH_UnlockPath(pdstPath);
-       PATH_UnlockPath(psrcPath);
+        PATH_UnlockPath(psrcPath);
+        return FALSE;
     }
+
+    hPath = pdstPath->BaseObject.hHmgr;
+    if (!PATH_AssignGdiPath(pdstPath, psrcPath))
+    {
+        PATH_UnlockPath(pdstPath);
+        PATH_Delete(hPath);
+        PATH_UnlockPath(psrcPath);
+        return FALSE;
+    }
+
+    dst->dclevel.flPath = src->dclevel.flPath;
+    dst->dclevel.hPath = hPath;
+
+    PATH_UnlockPath(pdstPath);
+    PATH_UnlockPath(psrcPath);
     return TRUE;
 }
 
 BOOL PATH_RestorePath( DC *dst, DC *src )
 {
+    PPATH pdstPath, psrcPath;
+
     TRACE("PATH_RestorePath\n");
+
+    psrcPath = PATH_LockPath(src->dclevel.hPath);
+    if (!psrcPath)
+        return FALSE;
 
     if (dst->dclevel.hPath == NULL)
     {
-       PPATH pdstPath, psrcPath = PATH_LockPath(src->dclevel.hPath);
-       TRACE("PATH_RestorePath 1\n");
-       pdstPath = PATH_CreatePath(psrcPath->numEntriesAllocated);
-       dst->dclevel.flPath = src->dclevel.flPath;
-       dst->dclevel.hPath = pdstPath->BaseObject.hHmgr;
+        HPATH hPath;
 
-       PATH_AssignGdiPath(pdstPath, psrcPath);
+        TRACE("PATH_RestorePath 1\n");
+        pdstPath = PATH_CreatePath(psrcPath->numEntriesAllocated);
+        if (!pdstPath)
+        {
+            PATH_UnlockPath(psrcPath);
+            return FALSE;
+        }
 
-       PATH_UnlockPath(pdstPath);
-       PATH_UnlockPath(psrcPath);
+        hPath = pdstPath->BaseObject.hHmgr;
+        if (!PATH_AssignGdiPath(pdstPath, psrcPath))
+        {
+            PATH_UnlockPath(pdstPath);
+            PATH_Delete(hPath);
+            PATH_UnlockPath(psrcPath);
+            return FALSE;
+        }
+
+        dst->dclevel.flPath = src->dclevel.flPath;
+        dst->dclevel.hPath = hPath;
+        PATH_UnlockPath(pdstPath);
     }
     else
     {
-       PPATH pdstPath, psrcPath = PATH_LockPath(src->dclevel.hPath);
-       pdstPath = PATH_LockPath(dst->dclevel.hPath);
-       TRACE("PATH_RestorePath 2\n");
-       dst->dclevel.flPath = src->dclevel.flPath & (DCPATH_CLOCKWISE|DCPATH_ACTIVE);
-       PATH_AssignGdiPath(pdstPath, psrcPath);
+        pdstPath = PATH_LockPath(dst->dclevel.hPath);
+        if (!pdstPath)
+        {
+            PATH_UnlockPath(psrcPath);
+            return FALSE;
+        }
 
-       PATH_UnlockPath(pdstPath);
-       PATH_UnlockPath(psrcPath);
+        TRACE("PATH_RestorePath 2\n");
+        if (!PATH_AssignGdiPath(pdstPath, psrcPath))
+        {
+            PATH_UnlockPath(pdstPath);
+            PATH_UnlockPath(psrcPath);
+            return FALSE;
+        }
+
+        dst->dclevel.flPath = src->dclevel.flPath & (DCPATH_CLOCKWISE|DCPATH_ACTIVE);
+        PATH_UnlockPath(pdstPath);
     }
+
+    PATH_UnlockPath(psrcPath);
     return TRUE;
 }
 
@@ -272,6 +331,9 @@ PATH_AddEntry(
     TRACE("(%d,%d) - %d\n", pPoint->x, pPoint->y, flags);
 
     /* Reserve enough memory for an extra path entry */
+    if (pPath->numEntriesUsed == MAXLONG)
+        return FALSE;
+
     if (!PATH_ReserveEntries(pPath, pPath->numEntriesUsed + 1))
         return FALSE;
 
@@ -302,7 +364,11 @@ PATH_ReserveEntries(
     BYTE *pFlagsNew;
 
     ASSERT(pPath != NULL);
-    ASSERT(numEntries >= 0);
+    if ((numEntries < 0) ||
+        ((ULONG)numEntries > MAXULONG / sizeof(POINT)))
+    {
+        return FALSE;
+    }
 
     /* Do we have to allocate more memory? */
     if (numEntries > pPath->numEntriesAllocated)
@@ -314,7 +380,15 @@ PATH_ReserveEntries(
         {
             numEntriesToAllocate = pPath->numEntriesAllocated;
             while (numEntriesToAllocate < numEntries)
+            {
+                if ((ULONG)numEntriesToAllocate >
+                    MAXULONG / sizeof(POINT) / GROW_FACTOR_NUMER)
+                {
+                    numEntriesToAllocate = numEntries;
+                    break;
+                }
                 numEntriesToAllocate = numEntriesToAllocate * GROW_FACTOR_NUMER / GROW_FACTOR_DENOM;
+            }
         }
         else
             numEntriesToAllocate = numEntries;
@@ -465,7 +539,12 @@ static BYTE *add_log_points( DC *dc, PPATH path, const POINT *points,
 {
     BYTE *ret;
 
-    if (!PATH_ReserveEntries( path, path->numEntriesUsed + count )) return NULL;
+    if ((count > MAXLONG) ||
+        (path->numEntriesUsed > MAXLONG - (INT)count) ||
+        !PATH_ReserveEntries(path, path->numEntriesUsed + (INT)count))
+    {
+        return NULL;
+    }
 
     ret = &path->pFlags[path->numEntriesUsed];
 
@@ -491,7 +570,12 @@ static BYTE *add_points( PPATH path, const POINT *points, DWORD count, BYTE type
 {
     BYTE *ret;
 
-    if (!PATH_ReserveEntries( path, path->numEntriesUsed + count )) return NULL;
+    if ((count > MAXLONG) ||
+        (path->numEntriesUsed > MAXLONG - (INT)count) ||
+        !PATH_ReserveEntries(path, path->numEntriesUsed + (INT)count))
+    {
+        return NULL;
+    }
 
     ret = &path->pFlags[path->numEntriesUsed];
     memcpy( &path->pPoints[path->numEntriesUsed], points, count * sizeof(*points) );
@@ -1802,10 +1886,12 @@ PPATH FASTCALL
 IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
 {
     INT i, j, numStrokes, numOldStrokes, penWidthIn, penWidthOut;
-    PPATH flat_path, pNewPath = NULL, *pStrokes = NULL, *pOldStrokes, pUpPath, pDownPath;
+    PPATH flat_path, pNewPath = NULL, *pStrokes = NULL, *pOldStrokes;
+    PPATH pUpPath = NULL, pDownPath = NULL;
     BYTE *type;
     DWORD joint, endcap;
     KFLOATING_SAVE fpsave;
+    BOOL bFloatStateSaved = FALSE;
 
     endcap = (PS_ENDCAP_MASK & penStyle);
     joint = (PS_JOIN_MASK & penStyle);
@@ -1848,24 +1934,30 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                     pStrokes = ExAllocatePoolWithTag(PagedPool, sizeof(*pStrokes), TAG_PATH);
                 else
                 {
+                    PPATH *pNewStrokes;
+
                     pOldStrokes = pStrokes; // Save old pointer.
-                    pStrokes = ExAllocatePoolWithTag(PagedPool, numStrokes * sizeof(*pStrokes), TAG_PATH);
-                    if (!pStrokes)
+                    pNewStrokes = ExAllocatePoolWithTag(PagedPool, numStrokes * sizeof(*pStrokes), TAG_PATH);
+                    if (!pNewStrokes)
                     {
-                       ExFreePoolWithTag(pOldStrokes, TAG_PATH);
-                       goto Exit;
+                        numStrokes--;
+                        goto Exit;
                     }
-                    RtlCopyMemory(pStrokes, pOldStrokes, numOldStrokes * sizeof(PPATH));
+
+                    RtlCopyMemory(pNewStrokes, pOldStrokes, numOldStrokes * sizeof(PPATH));
                     ExFreePoolWithTag(pOldStrokes, TAG_PATH); // Free old pointer.
+                    pStrokes = pNewStrokes;
                 }
                 if (!pStrokes)
                 {
+                   numStrokes--;
                    goto Exit;
                 }
                 pStrokes[numStrokes - 1] = ExAllocatePoolWithTag(PagedPool, sizeof(PATH), TAG_PATH);
                 if (!pStrokes[numStrokes - 1])
                 {
-                    ASSERT(FALSE); // FIXME
+                    numStrokes--;
+                    goto Exit;
                 }
                 PATH_InitGdiPath(pStrokes[numStrokes - 1]);
                 pStrokes[numStrokes - 1]->state = PATH_Open;
@@ -1873,7 +1965,8 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
             case (PT_LINETO | PT_CLOSEFIGURE):
                 point.x = flat_path->pPoints[i].x;
                 point.y = flat_path->pPoints[i].y;
-                PATH_AddEntry(pStrokes[numStrokes - 1], &point, flat_path->pFlags[i]);
+                if (!PATH_AddEntry(pStrokes[numStrokes - 1], &point, flat_path->pFlags[i]))
+                    goto Failure;
                 break;
             case PT_BEZIERTO:
                 /* Should never happen because of the FlattenPath call */
@@ -1892,14 +1985,28 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
         goto Exit;
     }
 
-    KeSaveFloatingPointState(&fpsave);
+    if (!NT_SUCCESS(KeSaveFloatingPointState(&fpsave)))
+        goto Failure;
+    bFloatStateSaved = TRUE;
 
     for (i = 0; i < numStrokes; i++)
     {
+        if (pStrokes[i]->numEntriesUsed < 2)
+        {
+            PATH_DestroyGdiPath(pStrokes[i]);
+            ExFreePoolWithTag(pStrokes[i], TAG_PATH);
+            pStrokes[i] = NULL;
+            continue;
+        }
+
         pUpPath = ExAllocatePoolWithTag(PagedPool, sizeof(PATH), TAG_PATH);
+        if (!pUpPath)
+            goto Failure;
         PATH_InitGdiPath(pUpPath);
         pUpPath->state = PATH_Open;
         pDownPath = ExAllocatePoolWithTag(PagedPool, sizeof(PATH), TAG_PATH);
+        if (!pDownPath)
+            goto Failure;
         PATH_InitGdiPath(pDownPath);
         pDownPath->state = PATH_Open;
 
@@ -1933,18 +2040,22 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                     case PS_ENDCAP_SQUARE :
                         pt.x = xo + round(sqrt(2) * penWidthOut * cos(M_PI_4 + theta));
                         pt.y = yo + round(sqrt(2) * penWidthOut * sin(M_PI_4 + theta));
-                        PATH_AddEntry(pUpPath, &pt, (j == 0 ? PT_MOVETO : PT_LINETO));
+                        if (!PATH_AddEntry(pUpPath, &pt, (j == 0 ? PT_MOVETO : PT_LINETO)))
+                            goto Failure;
                         pt.x = xo + round(sqrt(2) * penWidthIn * cos(- M_PI_4 + theta));
                         pt.y = yo + round(sqrt(2) * penWidthIn * sin(- M_PI_4 + theta));
-                        PATH_AddEntry(pUpPath, &pt, PT_LINETO);
+                        if (!PATH_AddEntry(pUpPath, &pt, PT_LINETO))
+                            goto Failure;
                         break;
                     case PS_ENDCAP_FLAT :
                         pt.x = xo + round(penWidthOut * cos(theta + M_PI_2));
                         pt.y = yo + round(penWidthOut * sin(theta + M_PI_2));
-                        PATH_AddEntry(pUpPath, &pt, (j == 0 ? PT_MOVETO : PT_LINETO));
+                        if (!PATH_AddEntry(pUpPath, &pt, (j == 0 ? PT_MOVETO : PT_LINETO)))
+                            goto Failure;
                         pt.x = xo - round(penWidthIn * cos(theta + M_PI_2));
                         pt.y = yo - round(penWidthIn * sin(theta + M_PI_2));
-                        PATH_AddEntry(pUpPath, &pt, PT_LINETO);
+                        if (!PATH_AddEntry(pUpPath, &pt, PT_LINETO))
+                            goto Failure;
                         break;
                     case PS_ENDCAP_ROUND :
                     default :
@@ -1952,10 +2063,18 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                         corners[0].y = yo - penWidthIn;
                         corners[1].x = xo + penWidthOut;
                         corners[1].y = yo + penWidthOut;
-                        PATH_DoArcPart(pUpPath , corners, theta + M_PI_2 , theta + 3 * M_PI_4, (j == 0 ? PT_MOVETO : FALSE));
-                        PATH_DoArcPart(pUpPath , corners, theta + 3 * M_PI_4 , theta + M_PI, FALSE);
-                        PATH_DoArcPart(pUpPath , corners, theta + M_PI, theta +  5 * M_PI_4, FALSE);
-                        PATH_DoArcPart(pUpPath , corners, theta + 5 * M_PI_4 , theta + 3 * M_PI_2, FALSE);
+                        if (!PATH_DoArcPart(pUpPath, corners, theta + M_PI_2,
+                                           theta + 3 * M_PI_4,
+                                           (j == 0 ? PT_MOVETO : FALSE)) ||
+                            !PATH_DoArcPart(pUpPath, corners, theta + 3 * M_PI_4,
+                                           theta + M_PI, FALSE) ||
+                            !PATH_DoArcPart(pUpPath, corners, theta + M_PI,
+                                           theta + 5 * M_PI_4, FALSE) ||
+                            !PATH_DoArcPart(pUpPath, corners, theta + 5 * M_PI_4,
+                                           theta + 3 * M_PI_2, FALSE))
+                        {
+                            goto Failure;
+                        }
                         break;
                 }
             }
@@ -2023,7 +2142,8 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                     pt.x = xo + round(penWidthIn * cos(theta + M_PI_2));
                     pt.y = yo + round(penWidthIn * sin(theta + M_PI_2));
                 }
-                PATH_AddEntry(pInsidePath, &pt, PT_LINETO);
+                if (!PATH_AddEntry(pInsidePath, &pt, PT_LINETO))
+                    goto Failure;
                 if (alpha > 0)
                 {
                     pt.x = xo + round(penWidthIn * cos(M_PI_2 + alpha + theta));
@@ -2034,7 +2154,8 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                     pt.x = xo - round(penWidthIn * cos(M_PI_2 + alpha + theta));
                     pt.y = yo - round(penWidthIn * sin(M_PI_2 + alpha + theta));
                 }
-                PATH_AddEntry(pInsidePath, &pt, PT_LINETO);
+                if (!PATH_AddEntry(pInsidePath, &pt, PT_LINETO))
+                    goto Failure;
                 /* Outside angle point */
                 switch(_joint)
                 {
@@ -2042,7 +2163,8 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                         miterWidth = fabs(penWidthOut / cos(M_PI_2 - fabs(alpha) / 2));
                         pt.x = xo + round(miterWidth * cos(theta + alpha / 2));
                         pt.y = yo + round(miterWidth * sin(theta + alpha / 2));
-                        PATH_AddEntry(pOutsidePath, &pt, PT_LINETO);
+                        if (!PATH_AddEntry(pOutsidePath, &pt, PT_LINETO))
+                            goto Failure;
                         break;
                     case PS_JOIN_BEVEL :
                         if (alpha > 0)
@@ -2055,7 +2177,8 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                             pt.x = xo - round(penWidthOut * cos(theta + M_PI_2));
                             pt.y = yo - round(penWidthOut * sin(theta + M_PI_2));
                         }
-                        PATH_AddEntry(pOutsidePath, &pt, PT_LINETO);
+                        if (!PATH_AddEntry(pOutsidePath, &pt, PT_LINETO))
+                            goto Failure;
                         if (alpha > 0)
                         {
                             pt.x = xo - round(penWidthOut * cos(M_PI_2 + alpha + theta));
@@ -2066,7 +2189,8 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                             pt.x = xo + round(penWidthOut * cos(M_PI_2 + alpha + theta));
                             pt.y = yo + round(penWidthOut * sin(M_PI_2 + alpha + theta));
                         }
-                        PATH_AddEntry(pOutsidePath, &pt, PT_LINETO);
+                        if (!PATH_AddEntry(pOutsidePath, &pt, PT_LINETO))
+                            goto Failure;
                         break;
                     case PS_JOIN_ROUND :
                     default :
@@ -2080,10 +2204,12 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                             pt.x = xo - round(penWidthOut * cos(theta + M_PI_2));
                             pt.y = yo - round(penWidthOut * sin(theta + M_PI_2));
                         }
-                        PATH_AddEntry(pOutsidePath, &pt, PT_BEZIERTO);
+                        if (!PATH_AddEntry(pOutsidePath, &pt, PT_BEZIERTO))
+                            goto Failure;
                         pt.x = xo + round(penWidthOut * cos(theta + alpha / 2));
                         pt.y = yo + round(penWidthOut * sin(theta + alpha / 2));
-                        PATH_AddEntry(pOutsidePath, &pt, PT_BEZIERTO);
+                        if (!PATH_AddEntry(pOutsidePath, &pt, PT_BEZIERTO))
+                            goto Failure;
                         if (alpha > 0)
                         {
                             pt.x = xo - round(penWidthOut * cos(M_PI_2 + alpha + theta));
@@ -2094,32 +2220,79 @@ IntGdiWidenPath(PPATH pPath, UINT penWidth, UINT penStyle, FLOAT eMiterLimit)
                             pt.x = xo + round(penWidthOut * cos(M_PI_2 + alpha + theta));
                             pt.y = yo + round(penWidthOut * sin(M_PI_2 + alpha + theta));
                         }
-                        PATH_AddEntry(pOutsidePath, &pt, PT_BEZIERTO);
+                        if (!PATH_AddEntry(pOutsidePath, &pt, PT_BEZIERTO))
+                            goto Failure;
                         break;
                 }
             }
         }
         type = add_points( pNewPath, pUpPath->pPoints, pUpPath->numEntriesUsed, PT_LINETO );
+        if (!type)
+            goto Failure;
         type[0] = PT_MOVETO;
         reverse_points( pDownPath->pPoints, pDownPath->numEntriesUsed );
-        type = add_points( pNewPath, pDownPath->pPoints, pDownPath->numEntriesUsed, PT_LINETO );
-        if (pStrokes[i]->pFlags[pStrokes[i]->numEntriesUsed - 1] & PT_CLOSEFIGURE) type[0] = PT_MOVETO;
+        if (pDownPath->numEntriesUsed)
+        {
+            type = add_points( pNewPath, pDownPath->pPoints, pDownPath->numEntriesUsed, PT_LINETO );
+            if (!type)
+                goto Failure;
+            if (pStrokes[i]->pFlags[pStrokes[i]->numEntriesUsed - 1] & PT_CLOSEFIGURE)
+                type[0] = PT_MOVETO;
+        }
 
         PATH_DestroyGdiPath(pStrokes[i]);
         ExFreePoolWithTag(pStrokes[i], TAG_PATH);
+        pStrokes[i] = NULL;
         PATH_DestroyGdiPath(pUpPath);
         ExFreePoolWithTag(pUpPath, TAG_PATH);
+        pUpPath = NULL;
         PATH_DestroyGdiPath(pDownPath);
         ExFreePoolWithTag(pDownPath, TAG_PATH);
+        pDownPath = NULL;
     }
 
     pNewPath->state = PATH_Closed;
     PATH_UnlockPath(pNewPath);
 
     KeRestoreFloatingPointState(&fpsave);
+    bFloatStateSaved = FALSE;
+
+    goto Exit;
+
+Failure:
+    if (pUpPath)
+    {
+        PATH_DestroyGdiPath(pUpPath);
+        ExFreePoolWithTag(pUpPath, TAG_PATH);
+    }
+    if (pDownPath)
+    {
+        PATH_DestroyGdiPath(pDownPath);
+        ExFreePoolWithTag(pDownPath, TAG_PATH);
+    }
+    if (bFloatStateSaved)
+        KeRestoreFloatingPointState(&fpsave);
+    if (pNewPath)
+    {
+        HPATH hPath = pNewPath->BaseObject.hHmgr;
+        PATH_UnlockPath(pNewPath);
+        PATH_Delete(hPath);
+        pNewPath = NULL;
+    }
 
 Exit:
-    if (pStrokes) ExFreePoolWithTag(pStrokes, TAG_PATH);
+    if (pStrokes)
+    {
+        for (i = 0; i < numStrokes; i++)
+        {
+            if (pStrokes[i])
+            {
+                PATH_DestroyGdiPath(pStrokes[i]);
+                ExFreePoolWithTag(pStrokes[i], TAG_PATH);
+            }
+        }
+        ExFreePoolWithTag(pStrokes, TAG_PATH);
+    }
     HPATH hpathToDelete = flat_path->BaseObject.hHmgr;
     PATH_UnlockPath(flat_path);
     PATH_Delete(hpathToDelete);
