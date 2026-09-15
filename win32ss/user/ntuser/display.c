@@ -839,10 +839,6 @@ UserChangeDisplaySettings(
         /* Do the mode switch */
         ulResult = PDEVOBJ_bSwitchMode(ppdev, newDevMode);
 
-        /* Restore mouse pointer, no hooks called */
-        pvOldCursor = UserSetCursor(pvOldCursor, TRUE);
-        ASSERT(pvOldCursor == NULL);
-
         /* Check for success or failure */
         if (!ulResult)
         {
@@ -895,8 +891,13 @@ UserChangeDisplaySettings(
          * since the display may have been messed up.
          */
 
-        /* Remove all cursor clipping */
+        /* Remove old cursor clipping and clamp its position after the new
+         * desktop bounds have been published. Only then redraw the cursor on
+         * the selected mode surface. */
         UserClipCursor(NULL);
+        UserSetCursorPos(gpsi->ptCursor.x, gpsi->ptCursor.y, 0, 0, FALSE);
+        pvOldCursor = UserSetCursor(pvOldCursor, TRUE);
+        ASSERT(pvOldCursor == NULL);
 
         //pdesk = IntGetActiveDesktop();
         //IntHideDesktop(pdesk);
