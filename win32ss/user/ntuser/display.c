@@ -857,6 +857,7 @@ UserChangeDisplaySettings(
             lResult = DISP_CHANGE_SUCCESSFUL;
             ExFreePoolWithTag(ppdev->pdmwDev, GDITAG_DEVMODE);
             ppdev->pdmwDev = newDevMode;
+            newDevMode = NULL;
 
             UserUpdateFullscreen(flags);
 
@@ -928,7 +929,7 @@ UserChangeDisplaySettings(
     }
 
 leave:
-    if (newDevMode && newDevMode != ppdev->pdmwDev)
+    if (newDevMode)
         ExFreePoolWithTag(newDevMode, GDITAG_DEVMODE);
 
     /* Release the PDEV */
