@@ -350,17 +350,10 @@ KeGetBugMessageText(IN ULONG BugCheckCode,
 
     /*
      * Globally protect in SEH as we are trying to access data in
-     * dire situations, and potentially going to patch it (see below).
+     * dire situations.
      */
     _SEH2_TRY
     {
-
-    /*
-     * Make the kernel resource section writable, as we are going to manually
-     * trim the trailing newlines in the bugcheck resource message in place,
-     * when OutputString is NULL and before displaying it on screen.
-     */
-    MmMakeKernelResourceSectionWritable();
 
     /* Find the message. This code is based on RtlFindMesssage */
     for (i = 0; i < KiBugCodeMessages->NumberOfBlocks; i++)
@@ -393,9 +386,6 @@ KeGetBugMessageText(IN ULONG BugCheckCode,
                                     (BugCode[Length - 1] == '\r') ||
                                     (BugCode[Length - 1] == ANSI_NULL)))
             {
-                /* Directly trim the newline in place if we don't return the string */
-                if (!OutputString) BugCode[Length - 1] = ANSI_NULL;
-
                 /* Skip the trailing newline */
                 Length--;
             }
