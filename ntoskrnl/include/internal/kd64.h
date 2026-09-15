@@ -551,6 +551,10 @@ extern ULONG KdPrintBufferSize;
 extern ULONG KdPrintBufferChanges;
 extern KSPIN_LOCK KdpPrintSpinLock;
 
+VOID
+NTAPI
+KdpPrepareNmiCrash(VOID);
+
 extern BREAKPOINT_ENTRY KdpBreakpointTable[KD_BREAKPOINT_MAX];
 extern KD_BREAKPOINT_TYPE KdpBreakpointInstruction;
 extern BOOLEAN KdpOweBreakpoint;

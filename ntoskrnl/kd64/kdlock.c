@@ -30,6 +30,17 @@ KdpPortUnlock(VOID)
     KiReleaseSpinLock(&KdpDebuggerLock);
 }
 
+VOID
+NTAPI
+KdpPrepareNmiCrash(VOID)
+{
+    /* An NMI can interrupt a processor while DbgPrint owns this lock, or it
+     * can diagnose a deadlock involving its owner. The unhandled-NMI path is
+     * irrevocably fatal and prints before freezing the other processors, so
+     * waiting for the old owner here would defeat NMI crash recovery. */
+    InterlockedExchange((PLONG)&KdpPrintSpinLock, 0);
+}
+
 BOOLEAN
 NTAPI
 KdpPollBreakInWithPortLock(VOID)

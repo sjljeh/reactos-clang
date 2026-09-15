@@ -537,12 +537,15 @@ KiTrap02Handler(VOID)
     /* Store the trap frame in the KPRCB */
     KiSaveProcessorState(&TrapFrame, NULL);
 
-    /* Give the active KD transport a chance to select its emergency path. */
-    KdNmiTransition();
-
     /* Call any registered NMI handlers and see if they handled it or not */
     if (!KiHandleNmi())
     {
+        /* The machine is going down. Abandon KD state that may be owned by a
+         * deadlocked or NMI-interrupted processor, then select the emergency
+         * transport before the bugcheck path prints anything. */
+        KdpPrepareNmiCrash();
+        KdNmiTransition();
+
         /*
          * They did not, so call the platform HAL routine to bugcheck the system
          *
