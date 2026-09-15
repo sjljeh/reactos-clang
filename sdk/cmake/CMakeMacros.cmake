@@ -408,7 +408,7 @@ function(create_iso_lists)
         DESTINATION reactos
         NO_CAB FOR bootcd regtest)
 
-if(TRUE) ## Include the RAMDISK ISO for out-of-band serial debugging
+if(FALSE) ## Disabled until we want a RAMDISK ISO
     # Add the LiveImage into the BootCD
     add_cd_file(
         TARGET livecd
