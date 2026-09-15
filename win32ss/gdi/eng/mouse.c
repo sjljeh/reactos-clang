@@ -201,6 +201,12 @@ IntHideMousePointer(
     rclDest.right = min(pt.x + pgp->Size.cx, psoDest->sizlBitmap.cx);
     rclDest.bottom = min(pt.y + pgp->Size.cy, psoDest->sizlBitmap.cy);
 
+    if ((rclDest.left >= rclDest.right) ||
+        (rclDest.top >= rclDest.bottom))
+    {
+        return;
+    }
+
     ptlSave.x = rclDest.left - pt.x;
     ptlSave.y = rclDest.top - pt.y;
 
@@ -251,6 +257,12 @@ IntShowMousePointer(
     rclSurf.top = max(pt.y, 0);
     rclSurf.right = min(pt.x + pgp->Size.cx, psoDest->sizlBitmap.cx);
     rclSurf.bottom = min(pt.y + pgp->Size.cy, psoDest->sizlBitmap.cy);
+
+    if ((rclSurf.left >= rclSurf.right) ||
+        (rclSurf.top >= rclSurf.bottom))
+    {
+        return;
+    }
 
     /* Calculate the rect in the pointer bitmap */
     rclPointer.left = rclSurf.left - pt.x;
