@@ -381,11 +381,11 @@ ApicInitializeLocalApic(ULONG Cpu)
     LvtEntry.MessageType = APIC_MT_ExtInt;
     ApicWrite(APIC_LINT0, LvtEntry.Long);
 
-    /* Enable LINT1 (NMI) */
-    LvtEntry.Mask = 0;
+    /* Route the external edge-triggered NMI pin only to the BSP. */
+    LvtEntry.Mask = (Cpu != 0);
     LvtEntry.Vector = APIC_NMI_VECTOR;
     LvtEntry.MessageType = APIC_MT_NMI;
-    LvtEntry.TriggerMode = APIC_TGM_Level;
+    LvtEntry.TriggerMode = APIC_TGM_Edge;
     ApicWrite(APIC_LINT1, LvtEntry.Long);
 
     /* Enable error LVTR */
