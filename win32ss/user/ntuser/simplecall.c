@@ -554,10 +554,17 @@ NtUserCallTwoParam(
         {
             HWND hwnd = (HWND)Param1;
             BOOL fAltTab = (BOOL)Param2;
+            PTHREADINFO ptiTarget;
+            USER_REFERENCE_ENTRY Ref;
+
             Ret = 0;
             Window = UserGetWindowObject(hwnd);
             if (!Window)
                 break;
+
+            UserRefObjectCo(Window, &Ref);
+            ptiTarget = Window->head.pti;
+            IntReferenceThreadInfo(ptiTarget);
 
             if (gpqForeground && !fAltTab)
             {
@@ -570,16 +577,22 @@ NtUserCallTwoParam(
                 }
 
                 UserSetActiveWindow(Window);
-                break;
+                goto SwitchCleanup;
             }
 
             co_IntSetForegroundWindowMouse(Window);
 
-            if (fAltTab && (Window->style & WS_MINIMIZE))
+            if (fAltTab &&
+                UserGetWindowObject(hwnd) == Window &&
+                (Window->style & WS_MINIMIZE))
             {
                 MSG msg = { UserHMGetHandle(Window), WM_SYSCOMMAND, SC_RESTORE, 0 };
-                MsqPostMessage(Window->head.pti, &msg, FALSE, QS_POSTMESSAGE, 0, 0);
+                MsqPostMessage(ptiTarget, &msg, FALSE, QS_POSTMESSAGE, 0, 0);
             }
+
+SwitchCleanup:
+            IntDereferenceThreadInfo(ptiTarget);
+            UserDerefObjectCo(Window);
             break;
         }
 
