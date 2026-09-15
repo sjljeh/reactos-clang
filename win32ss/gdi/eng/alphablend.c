@@ -31,6 +31,8 @@ EngAlphaBlend(
     RECTL              ClipRect;
     RECTL              CombinedRect;
     RECTL              Rect;
+    RECTL              SurfaceRect;
+    RECTL              ClippedOutput;
     POINTL             Translate;
     INTENG_ENTER_LEAVE EnterLeaveSource;
     INTENG_ENTER_LEAVE EnterLeaveDest;
@@ -41,6 +43,8 @@ EngAlphaBlend(
     BOOL               EnumMore;
     ULONG              i;
     BOOLEAN            Ret;
+    LONGLONG           OutputWidth, OutputHeight;
+    LONGLONG           InputWidth, InputHeight;
 
     DPRINT("EngAlphaBlend(psoDest:0x%p, psoSource:0x%p, ClipRegion:0x%p, ColorTranslation:0x%p,\n", psoDest, psoSource, ClipRegion, ColorTranslation);
     DPRINT("              DestRect:{0x%x, 0x%x, 0x%x, 0x%x}, SourceRect:{0x%x, 0x%x, 0x%x, 0x%x},\n",
@@ -57,13 +61,57 @@ EngAlphaBlend(
     /* Validate input */
     InputRect = *SourceRect;
     RECTL_vMakeWellOrdered(&InputRect);
-    if ( (InputRect.top < 0) || (InputRect.bottom < 0) ||
+    if ((InputRect.left >= InputRect.right) ||
+         (InputRect.top >= InputRect.bottom) ||
+         (InputRect.top < 0) || (InputRect.bottom < 0) ||
          (InputRect.left < 0) || (InputRect.right < 0) ||
          InputRect.right > psoSource->sizlBitmap.cx ||
          InputRect.bottom > psoSource->sizlBitmap.cy )
     {
         EngSetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
+    }
+
+    /* Clip to the destination surface itself. A DC or driver clip can be
+     * temporarily larger than a newly selected mode surface. Adjust the
+     * source rectangle proportionally so scaling remains unchanged. */
+    if ((OutputRect.left >= OutputRect.right) ||
+        (OutputRect.top >= OutputRect.bottom))
+    {
+        return TRUE;
+    }
+
+    SurfaceRect.left = 0;
+    SurfaceRect.top = 0;
+    SurfaceRect.right = psoDest->sizlBitmap.cx;
+    SurfaceRect.bottom = psoDest->sizlBitmap.cy;
+    if (!RECTL_bIntersectRect(&ClippedOutput, &OutputRect, &SurfaceRect))
+        return TRUE;
+
+    if ((ClippedOutput.left != OutputRect.left) ||
+        (ClippedOutput.top != OutputRect.top) ||
+        (ClippedOutput.right != OutputRect.right) ||
+        (ClippedOutput.bottom != OutputRect.bottom))
+    {
+        OutputWidth = (LONGLONG)OutputRect.right - OutputRect.left;
+        OutputHeight = (LONGLONG)OutputRect.bottom - OutputRect.top;
+        InputWidth = (LONGLONG)InputRect.right - InputRect.left;
+        InputHeight = (LONGLONG)InputRect.bottom - InputRect.top;
+
+        Rect.left = InputRect.left +
+                    (LONG)(((LONGLONG)ClippedOutput.left - OutputRect.left) *
+                           InputWidth / OutputWidth);
+        Rect.right = InputRect.left +
+                     (LONG)(((LONGLONG)ClippedOutput.right - OutputRect.left) *
+                            InputWidth / OutputWidth);
+        Rect.top = InputRect.top +
+                   (LONG)(((LONGLONG)ClippedOutput.top - OutputRect.top) *
+                          InputHeight / OutputHeight);
+        Rect.bottom = InputRect.top +
+                      (LONG)(((LONGLONG)ClippedOutput.bottom - OutputRect.top) *
+                             InputHeight / OutputHeight);
+        InputRect = Rect;
+        OutputRect = ClippedOutput;
     }
 
     if (psoDest == psoSource &&
@@ -276,4 +324,3 @@ NtGdiEngAlphaBlend(IN SURFOBJ *psoDest,
 
     return EngAlphaBlend(psoDest, psoSource, ClipRegion, ColorTranslation, &DestRect, &SourceRect, BlendObj);
 }
-
