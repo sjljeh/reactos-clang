@@ -35,6 +35,13 @@ HalHandleNMI(
     if (HalpNMIInProgress++)
         ERROR_DBGBREAK();
 
+    /* Honor the Windows NMICrashDump policy before touching boot video.
+     * Apart from providing the expected bugcheck, this avoids acquiring
+     * display resources when an operator injects an NMI to diagnose a
+     * deadlocked system. */
+    if (HalpNMIDumpFlag)
+        KeBugCheckEx(NMI_HARDWARE_FAILURE, 0, 0, 0, 0);
+
     /* Get NMI reason from hardware */
 #if defined(SARCH_PC98)
     SystemControl.Bits = __inbyte(PPI_IO_i_PORT_B);

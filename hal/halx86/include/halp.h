@@ -648,6 +648,7 @@ HalInitializeBios(
 #endif
 
 extern BOOLEAN HalpNMIInProgress;
+extern BOOLEAN HalpNMIDumpFlag;
 
 extern ADDRESS_USAGE HalpDefaultIoSpace;
 
