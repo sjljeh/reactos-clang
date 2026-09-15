@@ -61,4 +61,10 @@ KdD3Transition(
     VOID
 );
 
+VOID
+NTAPI
+KdNmiTransition(
+    VOID
+);
+
 #endif

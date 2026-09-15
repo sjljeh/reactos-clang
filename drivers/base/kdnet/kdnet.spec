@@ -7,3 +7,4 @@
 @ stdcall KdSave(long)
 @ stdcall KdSendPacket(long ptr ptr ptr)
 @ stdcall KdSetHiberRange()
+@ stdcall KdNmiTransition()

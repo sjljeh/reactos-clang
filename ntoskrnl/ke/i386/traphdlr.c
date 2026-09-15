@@ -540,6 +540,9 @@ KiTrap02Handler(VOID)
     /* Call any registered NMI handlers and see if they handled it or not */
     if (!KiHandleNmi())
     {
+        /* Give the active KD transport a chance to select its emergency path. */
+        KdNmiTransition();
+
         /*
          * They did not, so call the platform HAL routine to bugcheck the system
          *

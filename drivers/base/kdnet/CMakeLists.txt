@@ -9,6 +9,7 @@ list(APPEND SOURCE
     kdnet_net.c
     kdnet_packet.c
     kdnet_power.c
+    kdnet_serial.c
     )
 
 # Architecture-specific timing primitives (TSC + PIT calibration on x86).
@@ -27,5 +28,6 @@ add_library(kdnet MODULE
 set_module_type(kdnet kerneldll ENTRYPOINT 0)
 set_subsystem(kdnet native)
 add_importlibs(kdnet ntoskrnl hal kd_02_8086)
+target_link_libraries(kdnet cportlib strtol)
 add_dependencies(kdnet psdk bugcodes)
 add_cd_file(TARGET kdnet DESTINATION reactos/system32 NO_CAB FOR all)

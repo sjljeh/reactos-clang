@@ -92,6 +92,13 @@ KdRestore(IN BOOLEAN SleepTransition)
     return STATUS_SUCCESS;
 }
 
+VOID
+NTAPI
+KdNmiTransition(VOID)
+{
+    /* Serial KD is already the active transport. */
+}
+
 NTSTATUS
 NTAPI
 KdpPortInitialize(

@@ -10,6 +10,11 @@
 static ULONG KdNetTxPacketId = 0;
 static ULONG KdNetRxPacketId = 0x80000000;
 static ULONG KdNetRetryCount = 3;
+static volatile LONG KdNmiSerialActive;
+
+NTSTATUS NTAPI KdSerialInitializeNmi(VOID);
+KDSTATUS NTAPI KdSerialReceivePacket(ULONG, PSTRING, PSTRING, PULONG, PKD_CONTEXT);
+VOID NTAPI KdSerialSendPacket(ULONG, PSTRING, PSTRING, PKD_CONTEXT);
 
 #define KDNET_READ_PACKET   0
 #define KDNET_READ_TIMEOUT  1
@@ -132,7 +137,7 @@ KdNetReadKdPacket(PKD_PACKET PacketHeader, PSTRING MessageHeader, PSTRING Messag
 
 KDSTATUS
 NTAPI
-KdReceivePacket(
+KdNetReceivePacket(
     IN ULONG PacketType,
     OUT PSTRING MessageHeader,
     OUT PSTRING MessageData,
@@ -248,7 +253,7 @@ KdReceivePacket(
 
 VOID
 NTAPI
-KdSendPacket(
+KdNetSendPacket(
     IN ULONG PacketType,
     IN PSTRING MessageHeader,
     IN PSTRING MessageData,
@@ -299,7 +304,7 @@ KdSendPacket(
         KdNetSendKdPacket(a, handle, total, a->Parameters->TargetPort, a->Parameters->HostPort);
 
         /* Await the ACK. */
-        ack = KdReceivePacket(PACKET_TYPE_KD_ACKNOWLEDGE, NULL, NULL, NULL, Context);
+        ack = KdNetReceivePacket(PACKET_TYPE_KD_ACKNOWLEDGE, NULL, NULL, NULL, Context);
         if (ack == KdPacketReceived)
             break;
         if (ack == KdPacketTimedOut)
@@ -311,4 +316,41 @@ KdSendPacket(
     }
 
     KdNetTxPacketId += 2;
+}
+
+KDSTATUS
+NTAPI
+KdReceivePacket(
+    IN ULONG PacketType,
+    OUT PSTRING MessageHeader,
+    OUT PSTRING MessageData,
+    OUT PULONG DataLength,
+    IN OUT PKD_CONTEXT Context)
+{
+    if (KdNmiSerialActive)
+        return KdSerialReceivePacket(PacketType, MessageHeader, MessageData, DataLength, Context);
+
+    return KdNetReceivePacket(PacketType, MessageHeader, MessageData, DataLength, Context);
+}
+
+VOID
+NTAPI
+KdSendPacket(
+    IN ULONG PacketType,
+    IN PSTRING MessageHeader,
+    IN PSTRING MessageData,
+    IN OUT PKD_CONTEXT Context)
+{
+    if (KdNmiSerialActive)
+        KdSerialSendPacket(PacketType, MessageHeader, MessageData, Context);
+    else
+        KdNetSendPacket(PacketType, MessageHeader, MessageData, Context);
+}
+
+VOID
+NTAPI
+KdNmiTransition(VOID)
+{
+    if (!KdNmiSerialActive && NT_SUCCESS(KdSerialInitializeNmi()))
+        InterlockedExchange(&KdNmiSerialActive, TRUE);
 }
