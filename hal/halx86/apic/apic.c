@@ -388,6 +388,23 @@ ApicInitializeLocalApic(ULONG Cpu)
     LvtEntry.TriggerMode = APIC_TGM_Edge;
     ApicWrite(APIC_LINT1, LvtEntry.Long);
 
+    if (Cpu == 0)
+    {
+        ULONG PmBase;
+        USHORT TcoControl;
+
+        /* C610 LPC D31:F0 PMBASE is at PCI offset 40h. Ensure chipset NMI
+         * events reach LINT1 instead of being consumed as SMIs. */
+        WRITE_PORT_ULONG((PULONG)0xCF8, 0x8000F840);
+        PmBase = READ_PORT_ULONG((PULONG)0xCFC) & 0xFF80;
+        if (PmBase)
+        {
+            TcoControl = READ_PORT_USHORT((PUSHORT)(PmBase + 0x68));
+            TcoControl &= ~0x0200; /* NMI2SMI_EN */
+            WRITE_PORT_USHORT((PUSHORT)(PmBase + 0x68), TcoControl);
+        }
+    }
+
     /* Enable error LVTR */
     LvtEntry.Vector = APIC_ERROR_VECTOR;
     LvtEntry.MessageType = APIC_MT_Fixed;
