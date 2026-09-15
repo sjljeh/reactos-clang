@@ -1,4 +1,5 @@
 #include "kdnet.h"
+#include <drivers/serial/ns16550.h>
 
 /* Build the standard serial KD protocol as a private KDNET emergency backend. */
 #define KdD0Transition KdSerialD0Transition
@@ -32,7 +33,26 @@ NTSTATUS
 NTAPI
 KdSerialInitializeNmi(VOID)
 {
+    PUCHAR Address = UlongToPtr(0x3080);
+
     KdSerialCurrentPacketId = INITIAL_PACKET_ID | SYNC_PACKET_ID;
     KdSerialRemotePacketId = INITIAL_PACKET_ID;
-    return KdpSerialPortInitialize(UlongToPtr(0x3080), 115200);
+
+    /* The C610 KT UART can fail the destructive scratch/loopback presence
+     * tests while its AMT SOL session is between connections. Its PCI BAR was
+     * already validated during platform bring-up, so initialize it directly. */
+    KdSerialComPort.Address = Address;
+    KdSerialComPort.BaudRate = 0;
+    KdSerialComPort.Flags = 0;
+    WRITE_PORT_UCHAR(Address + LINE_CONTROL_REGISTER, 0);
+    WRITE_PORT_UCHAR(Address + INTERRUPT_ENABLE_REGISTER, 0);
+    WRITE_PORT_UCHAR(Address + MODEM_CONTROL_REGISTER,
+                     SERIAL_MCR_DTR | SERIAL_MCR_RTS | SERIAL_MCR_OUT2);
+    CpSetBaud(&KdSerialComPort, 115200);
+    WRITE_PORT_UCHAR(Address + LINE_CONTROL_REGISTER,
+                     SERIAL_8_DATA | SERIAL_1_STOP | SERIAL_NONE_PARITY);
+    CpEnableFifo(Address, TRUE);
+    (VOID)READ_PORT_UCHAR(Address + RECEIVE_BUFFER_REGISTER);
+    KdComPortInUse = Address;
+    return STATUS_SUCCESS;
 }
