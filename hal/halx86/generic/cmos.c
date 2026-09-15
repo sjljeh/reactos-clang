@@ -24,11 +24,18 @@ UCHAR
 NTAPI
 HalpReadCmos(IN UCHAR Reg)
 {
+    UCHAR Value;
+
     /* Select the register (0x80 to disable NMIs) */
     WRITE_PORT_UCHAR(CMOS_CONTROL_PORT, 0x80 | Reg);
 
     /* Query the value */
-    return READ_PORT_UCHAR(CMOS_DATA_PORT);
+    Value = READ_PORT_UCHAR(CMOS_DATA_PORT);
+
+    /* Keep the register selected and re-enable NMIs */
+    WRITE_PORT_UCHAR(CMOS_CONTROL_PORT, Reg & 0x7F);
+
+    return Value;
 }
 
 _Requires_lock_held_(HalpSystemHardwareLock)
@@ -42,6 +49,9 @@ HalpWriteCmos(IN UCHAR Reg,
 
     /* Write the value */
     WRITE_PORT_UCHAR(CMOS_DATA_PORT, Value);
+
+    /* Keep the register selected and re-enable NMIs */
+    WRITE_PORT_UCHAR(CMOS_CONTROL_PORT, Reg & 0x7F);
 }
 
 ULONG
