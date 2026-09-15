@@ -31,8 +31,6 @@ typedef struct tagDCE
     struct _MONITOR* pMonitor;
 } DCE, *PDCE;
 
-typedef struct _DCE_LAYOUT_LOCK DCE_LAYOUT_LOCK, *PDCE_LAYOUT_LOCK;
-
 /* internal DCX flags, see psdk/winuser.h for the rest */
 #define DCX_DCEEMPTY        0x00000800
 #define DCX_DCEBUSY         0x00001000
@@ -49,8 +47,6 @@ HWND FASTCALL IntWindowFromDC(HDC hDc);
 void FASTCALL DceFreeDCE(PDCE dce, BOOLEAN Force);
 void FASTCALL DceEmptyCache(void);
 VOID FASTCALL DceResetActiveDCEs(PWND Window);
-PDCE_LAYOUT_LOCK FASTCALL DceBeginLayoutLock(VOID);
-VOID FASTCALL DceEndLayoutLock(PWND Window, PDCE_LAYOUT_LOCK Lock);
 void FASTCALL DceFreeClassDCE(PDCE);
 HWND FASTCALL UserGethWnd(HDC,PWNDOBJ*);
 void FASTCALL DceFreeWindowDCE(PWND);
