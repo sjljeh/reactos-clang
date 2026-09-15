@@ -161,7 +161,8 @@ KeStallExecutionProcessor(ULONG MicroSeconds)
     StartTime = __rdtsc();
 
     /* Calculate the ending time */
-    EndTime = StartTime + KeGetPcr()->StallScaleFactor * MicroSeconds;
+    EndTime = StartTime +
+              __readfsdword(FIELD_OFFSET(KPCR, StallScaleFactor)) * MicroSeconds;
 
     /* Loop until time is elapsed */
     while (__rdtsc() < EndTime);

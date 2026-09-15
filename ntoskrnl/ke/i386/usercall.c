@@ -403,16 +403,16 @@ NtCallbackReturn(
     /* Get the trap frame */
     CallbackTrapFrame = CurrentThread->TrapFrame;
 
-    /* Restore the exception list */
-    Pcr = KeGetPcr();
-    Pcr->NtTib.ExceptionList = CallbackTrapFrame->ExceptionList;
-
     /* Store the results in the callback stack */
     *((PVOID*)CalloutFrame->Result) = Result;
     *((ULONG*)CalloutFrame->ResultLength) = ResultLength;
 
     /* Disable interrupts for NPX save and stack switch */
     _disable();
+
+    /* Pin the PCR before restoring processor-local state. */
+    Pcr = KeGetPcr();
+    Pcr->NtTib.ExceptionList = CallbackTrapFrame->ExceptionList;
 
     /* Set desination and origin NPX Frames */
     CbFxSaveArea = (PVOID)((ULONG)CurrentThread->InitialStack - sizeof(FX_SAVE_AREA));

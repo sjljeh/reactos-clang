@@ -340,7 +340,8 @@ RtlpCaptureStackLimits(IN ULONG_PTR Ebp,
     else
     {
         /* Now we're going to assume we're on the DPC stack */
-        *StackEnd = (ULONG_PTR)(KeGetPcr()->Prcb->DpcStack);
+        *StackEnd = (ULONG_PTR)__readfsdword(
+            FIELD_OFFSET(KIPCR, PrcbData) + FIELD_OFFSET(KPRCB, DpcStack));
         *StackBegin = *StackEnd - KERNEL_STACK_SIZE;
 
         /* Check if we seem to be on the DPC stack */
