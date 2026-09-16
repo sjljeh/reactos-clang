@@ -2759,7 +2759,7 @@ MiDecommitPages(IN PVOID StartingAddress,
                         (PteContents.u.Soft.PageFileHigh != 0))
                     {
                         KIRQL OldIrql = MiAcquirePfnLock();
-                        MiDeletePte(PointerPte, StartingAddress, Process, NULL);
+                        MiDeletePte(PointerPte, StartingAddress, Process, NULL, FALSE);
                         MiReleasePfnLock(OldIrql);
                     }
 

@@ -15,6 +15,10 @@
 #define MODULE_INVOLVED_IN_ARM3
 #include <mm/ARM3/miarm.h>
 
+VOID
+NTAPI
+MmRebalanceMemoryConsumersAndWait(VOID);
+
 /* GLOBALS ********************************************************************/
 
 #define HYDRA_PROCESS (PEPROCESS)1
