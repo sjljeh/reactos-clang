@@ -18,6 +18,7 @@
 #define MI_MAPPED_COPY_PAGES  14
 #define MI_POOL_COPY_BYTES    512
 #define MI_MAX_TRANSFER_SIZE  64 * 1024
+#define MI_DELETE_PTE_BATCH   64
 
 NTSTATUS NTAPI
 MiProtectVirtualMemory(IN PEPROCESS Process,
@@ -586,6 +587,7 @@ MiDeleteVirtualAddresses(
     KIRQL OldIrql;
     BOOLEAN FlushTb;
     BOOLEAN SectionVad;
+    ULONG PtesProcessed;
 
     /* Get the current process */
     CurrentProcess = PsGetCurrentProcess();
@@ -659,6 +661,7 @@ MiDeleteVirtualAddresses(
 
         /* Lock the PFN Database while we delete the PTEs */
         FlushTb = FALSE;
+        PtesProcessed = 0;
         OldIrql = MiAcquirePfnLock();
         PointerPte = MiAddressToPte(Va);
         do
@@ -722,7 +725,10 @@ MiDeleteVirtualAddresses(
             /* Update the address and PTE for it */
             Va += PAGE_SIZE;
             PointerPte++;
-        } while ((Va & (PDE_MAPPED_VA - 1)) && (Va <= EndingAddress));
+            PtesProcessed++;
+        } while ((PtesProcessed < MI_DELETE_PTE_BATCH) &&
+                 (Va & (PDE_MAPPED_VA - 1)) &&
+                 (Va <= EndingAddress));
 
         /* Keep freed pages unavailable until all stale translations are gone.
          * These are process VAs, so only CPUs currently running this process
