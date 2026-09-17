@@ -732,7 +732,7 @@ UserChangeDisplaySettings(
     NTSTATUS Status;
     PPDEVOBJ ppdev;
     WORD OrigBC;
-    //PDESKTOP pdesk;
+    PDESKTOP pdesk;
     PDEVMODEW newDevMode = NULL;
 
     /* If no DEVMODE is given, use registry settings */
@@ -885,6 +885,17 @@ UserChangeDisplaySettings(
             // Font is realized and this dc was previously set to internal DC_ATTR.
             gpsi->cxSysFontChar = IntGetCharDimensions(hSystemBM, &tmw, (DWORD*)&gpsi->cySysFontChar);
             gpsi->tmSysFont     = tmw;
+
+            /* Publish the new desktop bounds before any synchronous callback
+             * can paint against the replacement display surface. Resizing the
+             * desktop also rebuilds DCE visible regions for its descendants. */
+            pdesk = IntGetActiveDesktop();
+            if (pdesk)
+            {
+                co_IntResizeDesktop(pdesk,
+                                    ppdev->gdiinfo.ulHorzRes,
+                                    ppdev->gdiinfo.ulVertRes);
+            }
         }
 
         /*
@@ -899,9 +910,6 @@ UserChangeDisplaySettings(
         UserSetCursorPos(gpsi->ptCursor.x, gpsi->ptCursor.y, 0, 0, FALSE);
         pvOldCursor = UserSetCursor(pvOldCursor, TRUE);
         ASSERT(pvOldCursor == NULL);
-
-        //pdesk = IntGetActiveDesktop();
-        //IntHideDesktop(pdesk);
 
         /* Send WM_DISPLAYCHANGE to all toplevel windows */
         co_IntSendMessageTimeout( HWND_BROADCAST,
@@ -922,8 +930,6 @@ UserChangeDisplaySettings(
             UserSendNotifyMessage(HWND_BROADCAST, WM_SETTINGCHANGE, 0, 0);
             UserSendNotifyMessage(HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0);
         }
-
-        //co_IntShowDesktop(pdesk, ppdev->gdiinfo.ulHorzRes, ppdev->gdiinfo.ulVertRes);
 
         UserRedrawDesktop();
     }

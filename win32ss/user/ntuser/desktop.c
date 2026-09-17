@@ -1661,6 +1661,23 @@ co_IntShowDesktop(PDESKTOP Desktop, ULONG Width, ULONG Height, BOOL bRedraw)
 }
 
 NTSTATUS FASTCALL
+co_IntResizeDesktop(PDESKTOP Desktop, ULONG Width, ULONG Height)
+{
+    PWND pwnd = Desktop->pDeskInfo->spwnd;
+
+    ASSERT(pwnd);
+    co_WinPosSetWindowPos(pwnd,
+                          NULL,
+                          0,
+                          0,
+                          Width,
+                          Height,
+                          SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS FASTCALL
 IntHideDesktop(PDESKTOP Desktop)
 {
     PWND DesktopWnd;

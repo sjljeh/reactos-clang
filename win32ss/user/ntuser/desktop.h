@@ -131,6 +131,8 @@ IntGetActiveDesktop(VOID);
 
 NTSTATUS FASTCALL
 co_IntShowDesktop(PDESKTOP Desktop, ULONG Width, ULONG Height, BOOL Redraw);
+NTSTATUS FASTCALL
+co_IntResizeDesktop(PDESKTOP Desktop, ULONG Width, ULONG Height);
 
 NTSTATUS FASTCALL
 IntHideDesktop(PDESKTOP Desktop);
