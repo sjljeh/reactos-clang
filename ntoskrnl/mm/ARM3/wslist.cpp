@@ -640,8 +640,13 @@ MiAddValidPageToWorkingSet(
     {
         PMMWSL WsList = Process->Vm.VmWorkingSetList;
 
-        /* Without the protection of the mapping it could not be trimmed */
-        if ((Protection == MM_ZERO_ACCESS) || IsSharedWsle(WsList, (ULONG)Pfn1->u1.WsIndex, Address))
+        /*
+         * WsIndex is only a hint to the last process that inserted this shared
+         * PFN. It cannot establish membership in the current process, since
+         * another process may replace it at any time.
+         */
+        if ((Protection == MM_ZERO_ACCESS) ||
+            (FindSharedWsleIndex(WsList, Address, Pfn1) != ULONG_MAX))
             return;
 
         ULONG Index = GetFreeWsleIndex(WsList);
