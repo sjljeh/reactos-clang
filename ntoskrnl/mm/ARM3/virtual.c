@@ -364,13 +364,14 @@ MiDeleteSystemPageableVm(IN PMMPTE PointerPte,
     return ActualPages;
 }
 
+static
 VOID
-NTAPI
-MiDeletePte(IN PMMPTE PointerPte,
-            IN PVOID VirtualAddress,
-            IN PEPROCESS CurrentProcess,
-            IN PMMPTE PrototypePte,
-            IN BOOLEAN FlushTb)
+MiDeletePteInternal(IN PMMPTE PointerPte,
+                    IN PVOID VirtualAddress,
+                    IN PEPROCESS CurrentProcess,
+                    IN PMMPTE PrototypePte,
+                    IN BOOLEAN FlushTb,
+                    IN BOOLEAN RemoveSharedWsle)
 {
     PMMPFN Pfn1;
     MMPTE TempPte;
@@ -473,7 +474,8 @@ MiDeletePte(IN PMMPTE PointerPte,
         }
 #endif
         /* The working set of this process no longer holds it */
-        MiRemoveSharedPageFromWorkingSet(VirtualAddress, Pfn1);
+        if (RemoveSharedWsle)
+            MiRemoveSharedPageFromWorkingSet(VirtualAddress, Pfn1);
 
         /* Drop the share count on the page table */
         PointerPde = MiPteToPde(PointerPte);
@@ -550,6 +552,22 @@ MiDeletePte(IN PMMPTE PointerPte,
 
 VOID
 NTAPI
+MiDeletePte(IN PMMPTE PointerPte,
+            IN PVOID VirtualAddress,
+            IN PEPROCESS CurrentProcess,
+            IN PMMPTE PrototypePte,
+            IN BOOLEAN FlushTb)
+{
+    MiDeletePteInternal(PointerPte,
+                        VirtualAddress,
+                        CurrentProcess,
+                        PrototypePte,
+                        FlushTb,
+                        TRUE);
+}
+
+VOID
+NTAPI
 MiDeleteVirtualAddresses(
     _In_ ULONG_PTR Va,
     _In_ ULONG_PTR EndingAddress,
@@ -574,6 +592,9 @@ MiDeleteVirtualAddresses(
 
     /* Check if this is a section VAD or a VM VAD */
     SectionVad = (BOOLEAN)((Vad) && !(Vad->u.VadFlags.PrivateMemory) && (Vad->FirstPrototypePte));
+
+    if (SectionVad)
+        MiRemoveSharedPagesFromWorkingSet((PVOID)Va, (PVOID)EndingAddress);
 
     /* In all cases, we don't support fork() yet */
     ASSERT(CurrentProcess->CloneRoot == NULL);
@@ -668,11 +689,12 @@ MiDeleteVirtualAddresses(
 
                         /* Delete the PTE proper */
                         if (TempPte.u.Hard.Valid) FlushTb = TRUE;
-                        MiDeletePte(PointerPte,
-                                    (PVOID)Va,
-                                    CurrentProcess,
-                                    PrototypePte,
-                                    FALSE);
+                        MiDeletePteInternal(PointerPte,
+                                            (PVOID)Va,
+                                            CurrentProcess,
+                                            PrototypePte,
+                                            FALSE,
+                                            !SectionVad);
                     }
                 }
                 else

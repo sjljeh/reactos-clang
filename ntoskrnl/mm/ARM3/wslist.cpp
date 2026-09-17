@@ -703,6 +703,47 @@ MiRemoveSharedPageFromWorkingSet(
     Process->Vm.WorkingSetSize--;
 }
 
+/**
+ * @brief Removes the shared entries in a virtual address range in one pass.
+ * @remarks The process working set lock must be held exclusively.
+ */
+VOID
+NTAPI
+MiRemoveSharedPagesFromWorkingSet(
+    _In_ PVOID StartAddress,
+    _In_ PVOID EndAddress)
+{
+    PEPROCESS Process = PsGetCurrentProcess();
+
+    ASSERT(MM_ANY_WS_LOCK_HELD_EXCLUSIVE(PsGetCurrentThread()));
+    ASSERT(StartAddress <= EndAddress);
+
+    if ((StartAddress > MM_HIGHEST_USER_ADDRESS) ||
+        (Process->Vm.WorkingSetExpansionLinks.Flink == NULL) ||
+        Process->VmDeleted)
+    {
+        return;
+    }
+
+    PMMWSL WsList = Process->Vm.VmWorkingSetList;
+    for (ULONG Index = WsList->FirstDynamic; Index < WsList->LastEntry; Index++)
+    {
+        MMWSLENTRY& Entry = WsList->Wsle[Index].u1.e1;
+        if (!Entry.Valid || Entry.Direct)
+            continue;
+
+        PVOID Address = PAGE_ALIGN(WsList->Wsle[Index].u1.VirtualAddress);
+        if ((Address < StartAddress) || (Address > EndAddress))
+            continue;
+
+        RemoveNonDirectWsle(WsList, Index);
+        FreeWsleIndex(WsList, Index);
+
+        ASSERT(Process->Vm.WorkingSetSize != 0);
+        Process->Vm.WorkingSetSize--;
+    }
+}
+
 _Use_decl_annotations_
 VOID
 NTAPI

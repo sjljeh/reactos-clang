@@ -1063,6 +1063,12 @@ MiRemoveSharedPageFromWorkingSet(
     _In_ PVOID Address,
     _In_ PMMPFN Pfn);
 
+VOID
+NTAPI
+MiRemoveSharedPagesFromWorkingSet(
+    _In_ PVOID StartAddress,
+    _In_ PVOID EndAddress);
+
 _Requires_exclusive_lock_held_(WorkingSet->WorkingSetMutex)
 VOID
 NTAPI
