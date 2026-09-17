@@ -19,9 +19,6 @@
 /* Prototype PTEs allocated at most for one subsection */
 #define MI_SUBSECTION_PTES          ((ULONG)(_64K / sizeof(MMPTE)))
 
-/* Largest run of pages going through one paging I/O */
-#define MI_MAPPED_IO_PAGES          16
-
 /* Cleanup rounds before modified data that cannot be written is given up */
 #define MI_CLEANUP_ATTEMPTS         50
 
@@ -1508,13 +1505,13 @@ MiDereferenceDataFileMapForIo(
 }
 
 /**
- * @brief Starts bringing in a file page for a fault.
+ * @brief Starts bringing in a run of file pages for a fault.
  *
  * @param[in] PointerProtoPte
- * Prototype PTE holding a subsection PTE.
+ * Prototype PTE holding the subsection PTE that faulted.
  *
  * @param[out] PageRead
- * Receives what the read needs once the locks are released.
+ * Receives the clustered read transaction used once the locks are released.
  *
  * @param[in] Process
  * Faulting process, or a system value for system space.
@@ -1534,9 +1531,14 @@ MiResolveMappedFileFault(
     _In_ PEPROCESS Process,
     _In_ KIRQL OldIrql)
 {
+    LARGE_INTEGER CandidateOffset;
     PFN_NUMBER PageFrameIndex;
     PMSUBSECTION Subsection;
-    ULONG Color;
+    PFILE_OBJECT FileObject;
+    PMMPTE CandidatePte;
+    ULONG CandidateLength;
+    ULONG MaxPages;
+    ULONG Count;
 
     MI_ASSERT_PFN_LOCK_HELD();
     ASSERT(PointerProtoPte->u.Hard.Valid == 0);
@@ -1547,41 +1549,85 @@ MiResolveMappedFileFault(
     ASSERT(PointerProtoPte >= Subsection->SubsectionBase);
     ASSERT(PointerProtoPte < &Subsection->SubsectionBase[Subsection->PtesInSubsection]);
 
-    if (Process > HYDRA_PROCESS)
-        Color = MI_GET_NEXT_PROCESS_COLOR(Process);
-    else
-        Color = MI_GET_NEXT_COLOR();
-
-    MI_SET_USAGE(MI_USAGE_SECTION);
-    PageFrameIndex = MiRemoveAnyPage(Color);
-    if (!PageFrameIndex)
-    {
-        MiReleasePfnLock(OldIrql);
-        return STATUS_NO_MEMORY;
-    }
-
-    MiInitializeReadPage(PageFrameIndex, PointerProtoPte);
-
     /* The file outlives the read even if the section goes away meanwhile */
-    PageRead->FileObject = Subsection->ControlArea->FilePointer;
-    ObReferenceObject(PageRead->FileObject);
-    PageRead->PageFrameIndex = PageFrameIndex;
+    FileObject = Subsection->ControlArea->FilePointer;
+    PageRead->FileObject = FileObject;
+    PageRead->PageCount = 0;
+    PageRead->ValidLength = 0;
 
     if (Subsection->ControlArea->u.Flags.Image)
     {
-        PageRead->ValidLength = MiGetImagePageFileOffset((PSUBSECTION)Subsection,
-                                                         PointerProtoPte,
-                                                         &PageRead->FileOffset);
+        (void)MiGetImagePageFileOffset((PSUBSECTION)Subsection,
+                                       PointerProtoPte,
+                                       &PageRead->FileOffset);
     }
     else
     {
         PageRead->FileOffset.QuadPart =
             ((LONGLONG)Subsection->StartingSector +
              (PointerProtoPte - Subsection->SubsectionBase)) << PAGE_SHIFT;
+    }
+
+    /* Random-access files get exactly the demanded page. Otherwise fault
+     * forward within this subsection and submit one bounded paging MDL. */
+    MaxPages = BooleanFlagOn(FileObject->Flags, FO_RANDOM_ACCESS) ? 1 : MI_MAPPED_IO_PAGES;
+    for (Count = 0; Count < MaxPages; Count++)
+    {
+        CandidatePte = &PointerProtoPte[Count];
+        if ((CandidatePte >= &Subsection->SubsectionBase[Subsection->PtesInSubsection]) ||
+            ((Count != 0) && MiIsPteOnPdeBoundary(CandidatePte)) ||
+            (CandidatePte->u.Hard.Valid != 0) ||
+            (CandidatePte->u.Soft.Prototype != 1))
+        {
+            break;
+        }
+
+        if (Subsection->ControlArea->u.Flags.Image)
+        {
+            CandidateLength = MiGetImagePageFileOffset((PSUBSECTION)Subsection,
+                                                        CandidatePte,
+                                                        &CandidateOffset);
+            if (CandidateOffset.QuadPart !=
+                PageRead->FileOffset.QuadPart + ((LONGLONG)Count << PAGE_SHIFT))
+            {
+                break;
+            }
+        }
+        else
+        {
+            CandidateLength = 0;
+        }
+
+        MI_SET_USAGE(MI_USAGE_SECTION);
+        if (Process > HYDRA_PROCESS)
+            PageFrameIndex = MiRemoveAnyPage(MI_GET_NEXT_PROCESS_COLOR(Process));
+        else
+            PageFrameIndex = MiRemoveAnyPage(MI_GET_NEXT_COLOR());
+
+        if (!PageFrameIndex)
+            break;
+
+        MiInitializeReadPage(PageFrameIndex, CandidatePte);
+        PageRead->Pages[Count] = PageFrameIndex;
+        if (Subsection->ControlArea->u.Flags.Image)
+            PageRead->ValidLength += CandidateLength;
+    }
+
+    PageRead->PageCount = Count;
+    if (Count == 0)
+    {
+        MiReleasePfnLock(OldIrql);
+        return STATUS_NO_MEMORY;
+    }
+
+    if (!Subsection->ControlArea->u.Flags.Image)
+    {
         PageRead->ValidLength = MiGetDataFileReadLength(Subsection->ControlArea->Segment,
                                                         PageRead->FileOffset.QuadPart,
-                                                        1);
+                                                        Count);
     }
+
+    ObReferenceObject(FileObject);
 
     MiReleasePfnLock(OldIrql);
     return STATUS_MM_PAGE_READ_NEEDED;
@@ -1619,8 +1665,8 @@ MiCompletePageRead(
 
     Status = MiReadMappedPages(PageRead->FileObject,
                                &PageRead->FileOffset,
-                               &PageRead->PageFrameIndex,
-                               1,
+                               PageRead->Pages,
+                               PageRead->PageCount,
                                PageRead->ValidLength);
 
     ObDereferenceObject(PageRead->FileObject);

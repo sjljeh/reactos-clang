@@ -460,11 +460,15 @@ typedef struct _MMVIEW
 /* A fault needs file I/O or has to wait for it, done without the working set lock */
 #define STATUS_MM_PAGE_READ_NEEDED ((NTSTATUS)0xD0000002)
 
+/* Largest run of pages going through one mapped-file paging I/O */
+#define MI_MAPPED_IO_PAGES 16
+
 typedef struct _MI_PAGE_READ
 {
     PFILE_OBJECT FileObject;
     LARGE_INTEGER FileOffset;
-    PFN_NUMBER PageFrameIndex;
+    PFN_NUMBER Pages[MI_MAPPED_IO_PAGES];
+    ULONG PageCount;
     ULONG ValidLength;
     BOOLEAN Collided;
     PKEVENT PreviousEvent;
