@@ -569,11 +569,11 @@ CcCopyRead (
     {
         PPRIVATE_CACHE_MAP PrivateCacheMap;
 
-        /* If file isn't random access and next read may get us cross VACB boundary,
-         * schedule next read
-         */
-        if (!BooleanFlagOn(FileObject->Flags, FO_RANDOM_ACCESS) &&
-            (CurrentOffset - 1) / VACB_MAPPING_GRANULARITY != (CurrentOffset + ReadLength - 1) / VACB_MAPPING_GRANULARITY)
+        /* Feed every synchronous read to the sequential-access detector. The
+         * old cache manager populated a whole VACB when it was first mapped;
+         * waiting until a read approaches a VACB boundary leaves smaller files
+         * with no opportunity for read-ahead at all. */
+        if (!BooleanFlagOn(FileObject->Flags, FO_RANDOM_ACCESS))
         {
             CcScheduleReadAhead(FileObject, FileOffset, ReadLength);
         }
