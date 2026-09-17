@@ -733,6 +733,7 @@ UserChangeDisplaySettings(
     PPDEVOBJ ppdev;
     WORD OrigBC;
     PDESKTOP pdesk;
+    ULONG OldWidth, OldHeight, SafeWidth, SafeHeight;
     PDEVMODEW newDevMode = NULL;
 
     /* If no DEVMODE is given, use registry settings */
@@ -836,6 +837,20 @@ UserChangeDisplaySettings(
         /* Remove mouse pointer */
         pvOldCursor = UserSetCursor(NULL, TRUE);
 
+        /* A smaller surface must not become visible to GDI while desktop
+         * DCEs still describe the old, larger bounds. Shrink each axis before
+         * the mode switch; axes that grow are published after the switch. */
+        OldWidth = ppdev->gdiinfo.ulHorzRes;
+        OldHeight = ppdev->gdiinfo.ulVertRes;
+        SafeWidth = min(OldWidth, newDevMode->dmPelsWidth);
+        SafeHeight = min(OldHeight, newDevMode->dmPelsHeight);
+        pdesk = IntGetActiveDesktop();
+        if (pdesk &&
+            ((SafeWidth != OldWidth) || (SafeHeight != OldHeight)))
+        {
+            co_IntResizeDesktop(pdesk, SafeWidth, SafeHeight);
+        }
+
         /* Do the mode switch */
         ulResult = PDEVOBJ_bSwitchMode(ppdev, newDevMode);
 
@@ -850,6 +865,13 @@ UserChangeDisplaySettings(
                 lResult = DISP_CHANGE_RESTART;
             else
                 lResult = DISP_CHANGE_FAILED;
+
+            /* The old surface remains active, so restore its desktop bounds. */
+            if (pdesk &&
+                ((SafeWidth != OldWidth) || (SafeHeight != OldHeight)))
+            {
+                co_IntResizeDesktop(pdesk, OldWidth, OldHeight);
+            }
         }
         else
         {
@@ -886,10 +908,8 @@ UserChangeDisplaySettings(
             gpsi->cxSysFontChar = IntGetCharDimensions(hSystemBM, &tmw, (DWORD*)&gpsi->cySysFontChar);
             gpsi->tmSysFont     = tmw;
 
-            /* Publish the new desktop bounds before any synchronous callback
-             * can paint against the replacement display surface. Resizing the
-             * desktop also rebuilds DCE visible regions for its descendants. */
-            pdesk = IntGetActiveDesktop();
+            /* Publish growing axes now that the replacement surface can contain
+             * them. Resizing also rebuilds descendant DCE visible regions. */
             if (pdesk)
             {
                 co_IntResizeDesktop(pdesk,
