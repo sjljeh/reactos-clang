@@ -1535,7 +1535,13 @@ MiResolveMappedFileFault(
     PFN_NUMBER PageFrameIndex;
     PMSUBSECTION Subsection;
     PFILE_OBJECT FileObject;
+    PETHREAD Thread;
     PMMPTE CandidatePte;
+    PMMPTE FirstPte;
+    PMMPTE LastPte;
+    PMMPTE PtePageStart;
+    ULONG_PTR FaultIndex;
+    ULONG_PTR FirstIndex;
     ULONG CandidateLength;
     ULONG MaxPages;
     ULONG Count;
@@ -1551,32 +1557,81 @@ MiResolveMappedFileFault(
 
     /* The file outlives the read even if the section goes away meanwhile */
     FileObject = Subsection->ControlArea->FilePointer;
+    Thread = PsGetCurrentThread();
     PageRead->FileObject = FileObject;
     PageRead->PageCount = 0;
     PageRead->ValidLength = 0;
 
+    /* Recursive filesystem faults and random access get only the demanded
+     * page. Otherwise use the same 64-KiB window that file section residency
+     * uses, including useful pages before a nonsequential image fault. */
+    MaxPages = (!BooleanFlagOn(FileObject->Flags, FO_RANDOM_ACCESS) &&
+                !Thread->DisablePageFaultClustering &&
+                ((ULONG_PTR)IoGetTopLevelIrp() != FSRTL_MOD_WRITE_TOP_LEVEL_IRP)) ?
+               MI_MAPPED_IO_PAGES : 1;
+
+    FaultIndex = PointerProtoPte - Subsection->SubsectionBase;
+    FirstIndex = FaultIndex;
+    if ((MaxPages != 1) && !Thread->ForwardClusterOnly)
+    {
+        if (Subsection->ControlArea->u.Flags.Image)
+        {
+            FirstIndex &= ~(MI_MAPPED_IO_PAGES - 1);
+        }
+        else
+        {
+            FirstIndex = (Subsection->StartingSector + FaultIndex) &
+                         ~(MI_MAPPED_IO_PAGES - 1);
+            FirstIndex = (FirstIndex < Subsection->StartingSector) ?
+                         0 : FirstIndex - Subsection->StartingSector;
+        }
+    }
+
+    FirstPte = &Subsection->SubsectionBase[FirstIndex];
+    LastPte = &FirstPte[MaxPages];
+    if (LastPte > &Subsection->SubsectionBase[Subsection->PtesInSubsection])
+        LastPte = &Subsection->SubsectionBase[Subsection->PtesInSubsection];
+
+    /* Prototype PTE pages are pageable. The caller made only the page holding
+     * the fault valid before taking the PFN lock. */
+    PtePageStart = (PMMPTE)PAGE_ROUND_DOWN((ULONG_PTR)PointerProtoPte);
+    if (FirstPte < PtePageStart)
+        FirstPte = PtePageStart;
+    if (LastPte > &PtePageStart[PAGE_SIZE / sizeof(MMPTE)])
+        LastPte = &PtePageStart[PAGE_SIZE / sizeof(MMPTE)];
+
+    /* Keep the contiguous missing run containing the demanded page. */
+    for (CandidatePte = FirstPte; CandidatePte < PointerProtoPte; CandidatePte++)
+    {
+        if ((CandidatePte->u.Hard.Valid != 0) ||
+            (CandidatePte->u.Soft.Prototype != 1))
+        {
+            FirstPte = CandidatePte + 1;
+        }
+    }
+
+    /* Do not spend the last available pages on speculative backwards reads. */
+    if (MmAvailablePages <= (ULONG)(PointerProtoPte - FirstPte))
+        FirstPte = PointerProtoPte;
+
     if (Subsection->ControlArea->u.Flags.Image)
     {
         (void)MiGetImagePageFileOffset((PSUBSECTION)Subsection,
-                                       PointerProtoPte,
+                                       FirstPte,
                                        &PageRead->FileOffset);
     }
     else
     {
         PageRead->FileOffset.QuadPart =
             ((LONGLONG)Subsection->StartingSector +
-             (PointerProtoPte - Subsection->SubsectionBase)) << PAGE_SHIFT;
+             (FirstPte - Subsection->SubsectionBase)) << PAGE_SHIFT;
     }
 
-    /* Random-access files get exactly the demanded page. Otherwise fault
-     * forward within this subsection and submit one bounded paging MDL. */
-    MaxPages = BooleanFlagOn(FileObject->Flags, FO_RANDOM_ACCESS) ? 1 : MI_MAPPED_IO_PAGES;
-    for (Count = 0; Count < MaxPages; Count++)
+    for (Count = 0, CandidatePte = FirstPte;
+         (CandidatePte < LastPte) && (Count < MI_MAPPED_IO_PAGES);
+         Count++, CandidatePte++)
     {
-        CandidatePte = &PointerProtoPte[Count];
-        if ((CandidatePte >= &Subsection->SubsectionBase[Subsection->PtesInSubsection]) ||
-            ((Count != 0) && MiIsPteOnPdeBoundary(CandidatePte)) ||
-            (CandidatePte->u.Hard.Valid != 0) ||
+        if ((CandidatePte->u.Hard.Valid != 0) ||
             (CandidatePte->u.Soft.Prototype != 1))
         {
             break;
