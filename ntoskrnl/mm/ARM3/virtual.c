@@ -19,6 +19,7 @@
 #define MI_POOL_COPY_BYTES    512
 #define MI_MAX_TRANSFER_SIZE  64 * 1024
 #define MI_DELETE_PTE_BATCH   64
+#define MI_SINGLE_TB_FLUSH_MAX 32
 
 NTSTATUS NTAPI
 MiProtectVirtualMemory(IN PEPROCESS Process,
@@ -587,6 +588,7 @@ MiDeleteVirtualAddresses(
     KIRQL OldIrql;
     BOOLEAN FlushTb;
     BOOLEAN SectionVad;
+    BOOLEAN FlushSingleTb;
     ULONG PtesProcessed;
 
     /* Get the current process */
@@ -597,6 +599,8 @@ MiDeleteVirtualAddresses(
 
     if (SectionVad)
         MiRemoveSharedPagesFromWorkingSet((PVOID)Va, (PVOID)EndingAddress);
+
+    FlushSingleTb = (BOOLEAN)(((EndingAddress - Va) >> PAGE_SHIFT) < MI_SINGLE_TB_FLUSH_MAX);
 
     /* In all cases, we don't support fork() yet */
     ASSERT(CurrentProcess->CloneRoot == NULL);
@@ -691,13 +695,17 @@ MiDeleteVirtualAddresses(
                             PrototypePte = MI_GET_PROTOTYPE_PTE_FOR_VPN(Vad, Va >> PAGE_SHIFT);
 
                         /* Delete the PTE proper */
-                        if (TempPte.u.Hard.Valid) FlushTb = TRUE;
+                        if (TempPte.u.Hard.Valid && !FlushSingleTb)
+                            FlushTb = TRUE;
                         MiDeletePteInternal(PointerPte,
                                             (PVOID)Va,
                                             CurrentProcess,
                                             PrototypePte,
                                             FALSE,
                                             !SectionVad);
+
+                        if (TempPte.u.Hard.Valid && FlushSingleTb)
+                            KeInvalidateTlbEntry((PVOID)Va);
                     }
                 }
                 else
