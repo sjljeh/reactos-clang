@@ -961,7 +961,7 @@ MmFlushImageSection(
         MiReleasePfnLock(OldIrql);
 
         /* The last reference going away deletes it right here */
-        MiDereferenceDataFileMapForIo(ControlArea);
+        MiDereferenceDataFileMapForDelete(ControlArea);
     }
 }
 
