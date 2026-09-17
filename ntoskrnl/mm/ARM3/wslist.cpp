@@ -27,6 +27,11 @@ KEVENT MmWorkingSetManagerEvent;
 #define MI_WSLE_TRIM_AGE        3
 #define MI_WSLE_TRIM_AGE_HARD   1
 
+#define MI_WSLE_HASH_MINIMUM    256
+#define TAG_WSLE_HASH           'hWsM'
+
+static PVOID const WsleHashTombstone = reinterpret_cast<PVOID>(1);
+
 /* LOCAL FUNCTIONS ************************************************************/
 
 static MMPTE GetPteTemplateForWsList(PMMWSL WsList)
@@ -42,6 +47,150 @@ static ULONG GetNextPageColorForWsList(PMMWSL WsList)
 static ULONG GetEntriesPerPage()
 {
     return PAGE_SIZE / sizeof(MMWSLE);
+}
+
+static ULONG HashWsleAddress(PVOID Address, ULONG Size)
+{
+    ULONG_PTR Vpn = reinterpret_cast<ULONG_PTR>(Address) >> PAGE_SHIFT;
+    return static_cast<ULONG>((Vpn ^ (Vpn >> 11)) & (Size - 1));
+}
+
+static bool InsertWsleHash(PMMWSL WsList, PVOID Address, ULONG Index)
+{
+    ULONG Hash = HashWsleAddress(Address, WsList->HashTableSize);
+    ULONG FirstTombstone = ULONG_MAX;
+
+    for (ULONG Probe = 0; Probe < WsList->HashTableSize; Probe++)
+    {
+        PMMWSLE_HASH Entry = &WsList->HashTable[(Hash + Probe) & (WsList->HashTableSize - 1)];
+        if (Entry->Key == WsleHashTombstone)
+        {
+            if (FirstTombstone == ULONG_MAX)
+                FirstTombstone = (Hash + Probe) & (WsList->HashTableSize - 1);
+            continue;
+        }
+
+        if (Entry->Key == NULL)
+        {
+            if (FirstTombstone != ULONG_MAX)
+                Entry = &WsList->HashTable[FirstTombstone];
+
+            Entry->Key = Address;
+            Entry->Index = Index;
+            return true;
+        }
+    }
+
+    if (FirstTombstone != ULONG_MAX)
+    {
+        WsList->HashTable[FirstTombstone].Key = Address;
+        WsList->HashTable[FirstTombstone].Index = Index;
+        return true;
+    }
+
+    return false;
+}
+
+static void RebuildWsleHash(PMMWSL WsList)
+{
+    ULONG Size = MI_WSLE_HASH_MINIMUM;
+    while (Size < (WsList->NonDirectCount * 2))
+        Size <<= 1;
+
+    PMMWSLE_HASH Table = static_cast<PMMWSLE_HASH>(
+        ExAllocatePoolWithTag(NonPagedPool, Size * sizeof(*Table), TAG_WSLE_HASH));
+    if (Table == NULL)
+        return;
+
+    RtlZeroMemory(Table, Size * sizeof(*Table));
+
+    PMMWSLE_HASH OldTable = WsList->HashTable;
+    WsList->HashTable = Table;
+    WsList->HashTableSize = Size;
+
+    for (ULONG Index = WsList->FirstDynamic; Index < WsList->LastEntry; Index++)
+    {
+        MMWSLENTRY& Wsle = WsList->Wsle[Index].u1.e1;
+        if (Wsle.Valid && !Wsle.Direct)
+        {
+            PVOID Address = PAGE_ALIGN(WsList->Wsle[Index].u1.VirtualAddress);
+            Wsle.Hashed = InsertWsleHash(WsList, Address, Index);
+        }
+    }
+
+    if (OldTable != NULL)
+        ExFreePoolWithTag(OldTable, TAG_WSLE_HASH);
+}
+
+static ULONG FindHashedWsleIndex(PMMWSL WsList, PVOID Address)
+{
+    if (WsList->HashTable == NULL)
+        return ULONG_MAX;
+
+    ULONG Hash = HashWsleAddress(Address, WsList->HashTableSize);
+    for (ULONG Probe = 0; Probe < WsList->HashTableSize; Probe++)
+    {
+        PMMWSLE_HASH Entry = &WsList->HashTable[(Hash + Probe) & (WsList->HashTableSize - 1)];
+        if (Entry->Key == NULL)
+            break;
+        if (Entry->Key == Address)
+            return Entry->Index;
+    }
+
+    return ULONG_MAX;
+}
+
+static void RemoveWsleHash(PMMWSL WsList, ULONG Index)
+{
+    MMWSLENTRY& Wsle = WsList->Wsle[Index].u1.e1;
+    if (!Wsle.Hashed || (WsList->HashTable == NULL))
+        return;
+
+    PVOID Address = PAGE_ALIGN(WsList->Wsle[Index].u1.VirtualAddress);
+    ULONG Hash = HashWsleAddress(Address, WsList->HashTableSize);
+    for (ULONG Probe = 0; Probe < WsList->HashTableSize; Probe++)
+    {
+        PMMWSLE_HASH Entry = &WsList->HashTable[(Hash + Probe) & (WsList->HashTableSize - 1)];
+        if (Entry->Key == NULL)
+            break;
+        if ((Entry->Key == Address) && (Entry->Index == Index))
+        {
+            Entry->Key = WsleHashTombstone;
+            Entry->Index = 0;
+            Wsle.Hashed = 0;
+            return;
+        }
+    }
+
+    ASSERT(FALSE);
+}
+
+static void AddWsleHash(PMMWSL WsList, ULONG Index)
+{
+    WsList->NonDirectCount++;
+
+    if ((WsList->HashTable == NULL) ||
+        ((WsList->NonDirectCount * 3) >= (WsList->HashTableSize * 2)))
+    {
+        RebuildWsleHash(WsList);
+    }
+
+    MMWSLENTRY& Wsle = WsList->Wsle[Index].u1.e1;
+    if (!Wsle.Hashed && (WsList->HashTable != NULL))
+    {
+        PVOID Address = PAGE_ALIGN(WsList->Wsle[Index].u1.VirtualAddress);
+        Wsle.Hashed = InsertWsleHash(WsList, Address, Index);
+    }
+}
+
+static void RemoveNonDirectWsle(PMMWSL WsList, ULONG Index)
+{
+    ASSERT(WsList->Wsle[Index].u1.e1.Valid);
+    ASSERT(!WsList->Wsle[Index].u1.e1.Direct);
+    ASSERT(WsList->NonDirectCount != 0);
+
+    RemoveWsleHash(WsList, Index);
+    WsList->NonDirectCount--;
 }
 
 /**
@@ -193,7 +342,11 @@ static ULONG FindSharedWsleIndex(PMMWSL WsList, PVOID Address, PMMPFN Pfn)
     if (IsSharedWsle(WsList, (ULONG)Pfn->u1.WsIndex, Address))
         return (ULONG)Pfn->u1.WsIndex;
 
-    for (ULONG Index = WsList->FirstDynamic; Index < WsList->LastEntry; Index++)
+    ULONG Index = FindHashedWsleIndex(WsList, Address);
+    if ((Index != ULONG_MAX) && IsSharedWsle(WsList, Index, Address))
+        return Index;
+
+    for (Index = WsList->FirstDynamic; Index < WsList->LastEntry; Index++)
     {
         if (IsSharedWsle(WsList, Index, Address))
             return Index;
@@ -216,6 +369,9 @@ static void SetWsle(PMMSUPPORT Vm, ULONG Index, PVOID Address, ULONG Protection,
     NewWsle.LockedInWs = 0;
     NewWsle.Age = 0;
     NewWsle.Valid = 1;
+
+    if (!Direct)
+        AddWsleHash(Vm->VmWorkingSetList, Index);
 
     Vm->WorkingSetSize++;
     if (Vm->WorkingSetSize > Vm->PeakWorkingSetSize)
@@ -324,6 +480,7 @@ TrimWsList(PMMSUPPORT Vm, ULONG TrimAge, ULONG Target)
             MMPTE TempPte = PrototypePte;
             TempPte.u.Soft.Protection = Entry.u1.e1.Protection;
 
+            RemoveNonDirectWsle(WsList, i);
             FreeWsleIndex(WsList, i);
             Vm->WorkingSetSize--;
 
@@ -539,6 +696,7 @@ MiRemoveSharedPageFromWorkingSet(
     if (Index == ULONG_MAX)
         return;
 
+    RemoveNonDirectWsle(WsList, Index);
     FreeWsleIndex(WsList, Index);
 
     ASSERT(Process->Vm.WorkingSetSize != 0);
@@ -554,6 +712,9 @@ MiInitializeWorkingSetList(_Inout_ PMMSUPPORT WorkingSet)
 
     /* Initialize some fields */
     WsList->FirstFree = ULONG_MAX;
+    WsList->NonDirectCount = 0;
+    WsList->HashTable = NULL;
+    WsList->HashTableSize = 0;
     WsList->Wsle = reinterpret_cast<PMMWSLE>(WsList + 1);
     WsList->LastEntry = 0;
     WsList->FirstDynamic = 0;
@@ -614,6 +775,14 @@ MiShrinkWorkingSetList(
                 WsList->Wsle[Index].u1.Long = 0;
                 WorkingSet->WorkingSetSize--;
             }
+        }
+
+        if (WsList->HashTable != NULL)
+        {
+            ExFreePoolWithTag(WsList->HashTable, TAG_WSLE_HASH);
+            WsList->HashTable = NULL;
+            WsList->HashTableSize = 0;
+            WsList->NonDirectCount = 0;
         }
     }
 
