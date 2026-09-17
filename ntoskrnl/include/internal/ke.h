@@ -881,6 +881,14 @@ FASTCALL
 KeZeroPages(IN PVOID Address,
             IN ULONG Size);
 
+#ifdef _M_IX86
+VOID
+FASTCALL
+KiZeroPagesNonTemporal(
+    _Out_writes_bytes_all_(Size) PVOID Address,
+    _In_ ULONG Size);
+#endif
+
 BOOLEAN
 FASTCALL
 KeInvalidAccessAllowed(IN PVOID TrapInformation OPTIONAL);

@@ -111,7 +111,12 @@ MmZeroPageThread(VOID)
 
             ZeroAddress = MiMapPagesInZeroSpace(Pfn1, PageCount);
             ASSERT(ZeroAddress);
-            KeZeroPages(ZeroAddress, PageCount * PAGE_SIZE);
+#ifdef _M_IX86
+            if (KeFeatureBits & KF_XMMI64)
+                KiZeroPagesNonTemporal(ZeroAddress, PageCount * PAGE_SIZE);
+            else
+#endif
+                KeZeroPages(ZeroAddress, PageCount * PAGE_SIZE);
             MiUnmapPagesInZeroSpace(ZeroAddress, PageCount);
 
             OldIrql = MiAcquirePfnLock();
