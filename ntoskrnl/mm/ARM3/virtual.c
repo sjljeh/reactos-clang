@@ -2524,7 +2524,7 @@ MiSetProtectionOnSectionView(
         {
             /* A shared page has no room for its own protection, fault it in again */
             OldIrql = MiAcquirePfnLock();
-            MiDeletePte(PointerPte, Address, Process, ProtoPte);
+            MiDeletePte(PointerPte, Address, Process, ProtoPte, TRUE);
             MI_WRITE_INVALID_PTE(PointerPte, TempPte);
             MiReleasePfnLock(OldIrql);
         }
