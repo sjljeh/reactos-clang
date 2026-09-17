@@ -165,6 +165,10 @@ CcPerformReadAhead(
         KeAcquireSpinLockAtDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
         CurrentOffset = PrivateCacheMap->ReadAheadOffset[1].QuadPart;
         Length = PrivateCacheMap->ReadAheadLength[1];
+
+        /* Whoever schedules the next one starts from where this one reaches */
+        PrivateCacheMap->ReadAheadOffset[0].QuadPart = CurrentOffset + Length;
+        PrivateCacheMap->ReadAheadLength[1] = 0;
         KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
     }
     KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
@@ -212,7 +216,7 @@ CcPerformReadAhead(
         _SEH2_TRY
         {
             Success = CcRosEnsureVacbResident(Vacb, TRUE, FALSE,
-                    CurrentOffset % VACB_MAPPING_GRANULARITY, PartialLength);
+                    CurrentOffset % VACB_MAPPING_GRANULARITY, PartialLength, NULL);
         }
         _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
         {
@@ -248,7 +252,7 @@ CcPerformReadAhead(
 
         _SEH2_TRY
         {
-            Success = CcRosEnsureVacbResident(Vacb, TRUE, FALSE, 0, PartialLength);
+            Success = CcRosEnsureVacbResident(Vacb, TRUE, FALSE, 0, PartialLength, NULL);
         }
         _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
         {
@@ -499,11 +503,16 @@ CcCopyRead (
 {
     PROS_VACB Vacb;
     PROS_SHARED_CACHE_MAP SharedCacheMap = FileObject->SectionObjectPointer->SharedCacheMap;
+    PPRIVATE_CACHE_MAP PrivateCacheMap;
     NTSTATUS Status;
     LONGLONG CurrentOffset;
     LONGLONG ReadEnd = FileOffset->QuadPart + Length;
     ULONG ReadLength = 0;
     KIRQL OldIrql;
+    ULONG RequestedLength = Length;
+    BOOLEAN Fetched = FALSE;
+    BOOLEAN ReadAheadEnabled;
+    BOOLEAN StartReadAhead;
 
     CCTRACE(CC_API_DEBUG, "FileObject=%p FileOffset=%I64d Length=%lu Wait=%d\n",
         FileObject, FileOffset->QuadPart, Length, Wait);
@@ -518,6 +527,15 @@ CcCopyRead (
 
     /* Documented to ASSERT, but KMTests test this case... */
     // ASSERT((FileOffset->QuadPart + Length) <= SharedCacheMap->FileSize.QuadPart);
+
+    /* A stream that reads ahead stays a step in front of the reader */
+    OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
+    PrivateCacheMap = FileObject->PrivateCacheMap;
+    ReadAheadEnabled = (BOOLEAN)((PrivateCacheMap != NULL) &&
+                                 PrivateCacheMap->Flags.ReadAheadEnabled);
+    KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+    if (ReadAheadEnabled)
+        CcScheduleReadAhead(FileObject, FileOffset, Length);
 
     CurrentOffset = FileOffset->QuadPart;
     while(CurrentOffset < ReadEnd)
@@ -534,9 +552,13 @@ CcCopyRead (
             ULONG VacbOffset = CurrentOffset % VACB_MAPPING_GRANULARITY;
             ULONG VacbLength = min(Length, VACB_MAPPING_GRANULARITY - VacbOffset);
             SIZE_T CopyLength = VacbLength;
+            BOOLEAN VacbFetched;
 
-            if (!CcRosEnsureVacbResident(Vacb, Wait, FALSE, VacbOffset, VacbLength))
+            if (!CcRosEnsureVacbResident(Vacb, Wait, FALSE, VacbOffset, VacbLength, &VacbFetched))
                 return FALSE;
+
+            /* Any view of this read that came off the disk counts */
+            Fetched |= VacbFetched;
 
             _SEH2_TRY
             {
@@ -564,34 +586,27 @@ CcCopyRead (
     IoStatus->Status = STATUS_SUCCESS;
     IoStatus->Information = ReadLength;
 
-    /* If that was a successful sync read operation, let's handle read ahead */
-    if (Length == 0 && Wait)
+    /* The private map goes away with the handle, so take it again under the master lock */
+    StartReadAhead = FALSE;
+    OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
+    PrivateCacheMap = FileObject->PrivateCacheMap;
+    if (PrivateCacheMap != NULL)
     {
-        PPRIVATE_CACHE_MAP PrivateCacheMap;
+        /* A read that went to the disk is the one that starts reading ahead */
+        StartReadAhead = (BOOLEAN)(Fetched && !PrivateCacheMap->Flags.ReadAheadEnabled);
 
-        /* Feed every synchronous read to the sequential-access detector. The
-         * old cache manager populated a whole VACB when it was first mapped;
-         * waiting until a read approaches a VACB boundary leaves smaller files
-         * with no opportunity for read-ahead at all. */
-        if (!BooleanFlagOn(FileObject->Flags, FO_RANDOM_ACCESS))
-        {
-            CcScheduleReadAhead(FileObject, FileOffset, ReadLength);
-        }
-
-        /* And update read history in private cache map */
-        OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
-        PrivateCacheMap = FileObject->PrivateCacheMap;
-        if (PrivateCacheMap != NULL)
-        {
-            KeAcquireSpinLockAtDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
-            PrivateCacheMap->FileOffset1 = PrivateCacheMap->FileOffset2;
-            PrivateCacheMap->BeyondLastByte1 = PrivateCacheMap->BeyondLastByte2;
-            PrivateCacheMap->FileOffset2 = *FileOffset;
-            PrivateCacheMap->BeyondLastByte2.QuadPart = FileOffset->QuadPart + ReadLength;
-            KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
-        }
-        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+        /* Read ahead reads this to tell how the file is walked */
+        KeAcquireSpinLockAtDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+        PrivateCacheMap->FileOffset1 = PrivateCacheMap->FileOffset2;
+        PrivateCacheMap->BeyondLastByte1 = PrivateCacheMap->BeyondLastByte2;
+        PrivateCacheMap->FileOffset2 = *FileOffset;
+        PrivateCacheMap->BeyondLastByte2.QuadPart = FileOffset->QuadPart + ReadLength;
+        KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
     }
+    KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+
+    if (StartReadAhead)
+        CcScheduleReadAhead(FileObject, FileOffset, RequestedLength);
 
     return TRUE;
 }
@@ -645,7 +660,7 @@ CcCopyWrite (
 
         _SEH2_TRY
         {
-            if (!CcRosEnsureVacbResident(Vacb, Wait, FALSE, VacbOffset, VacbLength))
+            if (!CcRosEnsureVacbResident(Vacb, Wait, FALSE, VacbOffset, VacbLength, NULL))
             {
                 return FALSE;
             }
@@ -854,7 +869,7 @@ CcpZeroPartialPage(
 
     _SEH2_TRY
     {
-        if (!CcRosEnsureVacbResident(Vacb, Wait, FALSE, VacbOffset, Length))
+        if (!CcRosEnsureVacbResident(Vacb, Wait, FALSE, VacbOffset, Length, NULL))
         {
             Result = FALSE;
             _SEH2_LEAVE;
