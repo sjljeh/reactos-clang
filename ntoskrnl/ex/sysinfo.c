@@ -811,7 +811,7 @@ QSI_DEF(SystemPerformanceInformation)
     Spi->CcMdlReadWait = 0; /* FIXME */
     Spi->CcMdlReadNoWaitMiss = 0; /* FIXME */
     Spi->CcMdlReadWaitMiss = 0; /* FIXME */
-    Spi->CcReadAheadIos = 0; /* FIXME */
+    Spi->CcReadAheadIos = CcReadAheadIos;
     Spi->CcLazyWriteIos = CcLazyWriteIos;
     Spi->CcLazyWritePages = CcLazyWritePages;
     Spi->CcDataFlushes = CcDataFlushes;

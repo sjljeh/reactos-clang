@@ -1398,6 +1398,19 @@ CcRosReleaseFileCache (
     return STATUS_SUCCESS;
 }
 
+VOID
+CcRosReleaseCacheMapPin(
+    _In_ PROS_SHARED_CACHE_MAP SharedCacheMap)
+{
+    KIRQL OldIrql;
+
+    OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
+    ASSERT(SharedCacheMap->OpenCount != 0);
+    if (--SharedCacheMap->OpenCount == 0)
+        CcRosDeleteFileCache(SharedCacheMap->FileObject, SharedCacheMap, &OldIrql);
+    KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+}
+
 NTSTATUS
 CcRosInitializeFileCache (
     PFILE_OBJECT FileObject,

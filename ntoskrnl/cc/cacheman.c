@@ -150,7 +150,7 @@ CcRemapBcb (
 }
 
 /*
- * @unimplemented
+ * @implemented
  */
 VOID
 NTAPI
@@ -164,7 +164,12 @@ CcScheduleReadAhead (
     LARGE_INTEGER NewOffset;
     PROS_SHARED_CACHE_MAP SharedCacheMap;
     PPRIVATE_CACHE_MAP PrivateCacheMap;
+    PWORK_QUEUE_ENTRY WorkItem;
 
+    if ((Length == 0) || (FileOffset->QuadPart < 0))
+        return;
+
+    OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
     SharedCacheMap = FileObject->SectionObjectPointer->SharedCacheMap;
     PrivateCacheMap = FileObject->PrivateCacheMap;
 
@@ -172,23 +177,36 @@ CcScheduleReadAhead (
     if (SharedCacheMap == NULL || PrivateCacheMap == NULL ||
         BooleanFlagOn(SharedCacheMap->Flags, READAHEAD_DISABLED))
     {
+        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
         return;
     }
 
     /* Round read length with read ahead mask */
     Length = ROUND_UP(Length, PrivateCacheMap->ReadAheadMask + 1);
+    if (Length == 0)
+    {
+        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+        return;
+    }
+
     /* Compute the offset we'll reach */
     NewOffset.QuadPart = FileOffset->QuadPart + Length;
+    if (NewOffset.QuadPart < FileOffset->QuadPart)
+    {
+        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+        return;
+    }
 
     /* Lock read ahead spin lock */
-    KeAcquireSpinLock(&PrivateCacheMap->ReadAheadSpinLock, &OldIrql);
+    KeAcquireSpinLockAtDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
     /* Easy case: the file is sequentially read */
     if (BooleanFlagOn(FileObject->Flags, FO_SEQUENTIAL_ONLY))
     {
         /* If we went backward, this is no go! */
         if (NewOffset.QuadPart < PrivateCacheMap->ReadAheadOffset[1].QuadPart)
         {
-            KeReleaseSpinLock(&PrivateCacheMap->ReadAheadSpinLock, OldIrql);
+            KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+            KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
             return;
         }
 
@@ -212,47 +230,41 @@ CcScheduleReadAhead (
         else
         {
             /* FIXME: handle the other cases */
-            KeReleaseSpinLock(&PrivateCacheMap->ReadAheadSpinLock, OldIrql);
+            KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+            KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
             UNIMPLEMENTED_ONCE;
             return;
         }
     }
 
-    /* If read ahead isn't active yet */
-    if (!PrivateCacheMap->Flags.ReadAheadActive)
+    /* An active worker will consume the latest request it observed. */
+    if (PrivateCacheMap->Flags.ReadAheadActive)
     {
-        PWORK_QUEUE_ENTRY WorkItem;
-
-        /* It's active now!
-         * Be careful with the mask, you don't want to mess with node code
-         */
-        InterlockedOr((volatile long *)&PrivateCacheMap->UlongFlags, PRIVATE_CACHE_MAP_READ_AHEAD_ACTIVE);
-        KeReleaseSpinLock(&PrivateCacheMap->ReadAheadSpinLock, OldIrql);
-
-        /* Get a work item */
-        WorkItem = ExAllocateFromNPagedLookasideList(&CcTwilightLookasideList);
-        if (WorkItem != NULL)
-        {
-            /* Reference our FO so that it doesn't go in between */
-            ObReferenceObject(FileObject);
-
-            /* We want to do read ahead! */
-            WorkItem->Function = ReadAhead;
-            WorkItem->Parameters.Read.FileObject = FileObject;
-
-            /* Queue in the read ahead dedicated queue */
-            CcPostWorkQueue(WorkItem, &CcExpressWorkQueue);
-
-            return;
-        }
-
-        /* Fail path: lock again, and revert read ahead active */
-        KeAcquireSpinLock(&PrivateCacheMap->ReadAheadSpinLock, &OldIrql);
-        InterlockedAnd((volatile long *)&PrivateCacheMap->UlongFlags, ~PRIVATE_CACHE_MAP_READ_AHEAD_ACTIVE);
+        KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+        return;
     }
 
-    /* Done (fail) */
-    KeReleaseSpinLock(&PrivateCacheMap->ReadAheadSpinLock, OldIrql);
+    WorkItem = ExAllocateFromNPagedLookasideList(&CcTwilightLookasideList);
+    if (WorkItem == NULL)
+    {
+        KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+        return;
+    }
+
+    InterlockedOr((volatile long *)&PrivateCacheMap->UlongFlags,
+                  PRIVATE_CACHE_MAP_READ_AHEAD_ACTIVE);
+    SharedCacheMap->OpenCount++;
+    ObReferenceObject(FileObject);
+
+    WorkItem->Function = ReadAhead;
+    WorkItem->Parameters.Read.FileObject = FileObject;
+
+    KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+    KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+
+    CcPostWorkQueue(WorkItem, &CcExpressWorkQueue);
 }
 
 /*
@@ -361,10 +373,21 @@ CcSetReadAheadGranularity (
 	)
 {
     PPRIVATE_CACHE_MAP PrivateMap;
+    KIRQL OldIrql;
 
     CCTRACE(CC_API_DEBUG, "FileObject=%p Granularity=%lu\n",
         FileObject, Granularity);
 
+    if ((Granularity == 0) || ((Granularity & (Granularity - 1)) != 0))
+        return;
+
+    OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
     PrivateMap = FileObject->PrivateCacheMap;
-    PrivateMap->ReadAheadMask = Granularity - 1;
+    if (PrivateMap != NULL)
+    {
+        KeAcquireSpinLockAtDpcLevel(&PrivateMap->ReadAheadSpinLock);
+        PrivateMap->ReadAheadMask = Granularity - 1;
+        KeReleaseSpinLockFromDpcLevel(&PrivateMap->ReadAheadSpinLock);
+    }
+    KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
 }

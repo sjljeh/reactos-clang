@@ -42,6 +42,7 @@ ULONG CcFastReadResourceMiss;
  */
 ULONG CcDataPages = 0;
 ULONG CcDataFlushes = 0;
+ULONG CcReadAheadIos = 0;
 
 /* FUNCTIONS *****************************************************************/
 
@@ -140,20 +141,21 @@ CcPerformReadAhead(
     BOOLEAN Locked;
     BOOLEAN Success;
 
-    SharedCacheMap = FileObject->SectionObjectPointer->SharedCacheMap;
-
     /* Critical:
      * PrivateCacheMap might disappear in-between if the handle
      * to the file is closed (private is attached to the handle not to
      * the file), so we need to lock the master lock while we deal with
      * it. It won't disappear without attempting to lock such lock.
-     */
+    */
     OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
+    SharedCacheMap = FileObject->SectionObjectPointer->SharedCacheMap;
     PrivateCacheMap = FileObject->PrivateCacheMap;
+    ASSERT(SharedCacheMap != NULL);
     /* If the handle was closed since the read ahead was scheduled, just quit */
     if (PrivateCacheMap == NULL)
     {
         KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
+        CcRosReleaseCacheMapPin(SharedCacheMap);
         ObDereferenceObject(FileObject);
         return;
     }
@@ -178,6 +180,7 @@ CcPerformReadAhead(
 
     /* Remember it's locked */
     Locked = TRUE;
+    InterlockedIncrementUL(&CcReadAheadIos);
 
     /* Don't read past the end of the file */
     if (CurrentOffset >= SharedCacheMap->FileSize.QuadPart)
@@ -284,6 +287,8 @@ Clear:
     {
         SharedCacheMap->Callbacks->ReleaseFromReadAhead(SharedCacheMap->LazyWriteContext);
     }
+
+    CcRosReleaseCacheMapPin(SharedCacheMap);
 
     /* And drop our extra reference (See: CcScheduleReadAhead) */
     ObDereferenceObject(FileObject);
@@ -498,6 +503,7 @@ CcCopyRead (
     LONGLONG CurrentOffset;
     LONGLONG ReadEnd = FileOffset->QuadPart + Length;
     ULONG ReadLength = 0;
+    KIRQL OldIrql;
 
     CCTRACE(CC_API_DEBUG, "FileObject=%p FileOffset=%I64d Length=%lu Wait=%d\n",
         FileObject, FileOffset->QuadPart, Length, Wait);
@@ -558,11 +564,10 @@ CcCopyRead (
     IoStatus->Status = STATUS_SUCCESS;
     IoStatus->Information = ReadLength;
 
-#if 0
     /* If that was a successful sync read operation, let's handle read ahead */
     if (Length == 0 && Wait)
     {
-        PPRIVATE_CACHE_MAP PrivateCacheMap = FileObject->PrivateCacheMap;
+        PPRIVATE_CACHE_MAP PrivateCacheMap;
 
         /* If file isn't random access and next read may get us cross VACB boundary,
          * schedule next read
@@ -574,12 +579,19 @@ CcCopyRead (
         }
 
         /* And update read history in private cache map */
-        PrivateCacheMap->FileOffset1.QuadPart = PrivateCacheMap->FileOffset2.QuadPart;
-        PrivateCacheMap->BeyondLastByte1.QuadPart = PrivateCacheMap->BeyondLastByte2.QuadPart;
-        PrivateCacheMap->FileOffset2.QuadPart = FileOffset->QuadPart;
-        PrivateCacheMap->BeyondLastByte2.QuadPart = FileOffset->QuadPart + ReadLength;
+        OldIrql = KeAcquireQueuedSpinLock(LockQueueMasterLock);
+        PrivateCacheMap = FileObject->PrivateCacheMap;
+        if (PrivateCacheMap != NULL)
+        {
+            KeAcquireSpinLockAtDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+            PrivateCacheMap->FileOffset1 = PrivateCacheMap->FileOffset2;
+            PrivateCacheMap->BeyondLastByte1 = PrivateCacheMap->BeyondLastByte2;
+            PrivateCacheMap->FileOffset2 = *FileOffset;
+            PrivateCacheMap->BeyondLastByte2.QuadPart = FileOffset->QuadPart + ReadLength;
+            KeReleaseSpinLockFromDpcLevel(&PrivateCacheMap->ReadAheadSpinLock);
+        }
+        KeReleaseQueuedSpinLock(LockQueueMasterLock, OldIrql);
     }
-#endif
 
     return TRUE;
 }

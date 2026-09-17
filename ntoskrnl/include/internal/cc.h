@@ -69,6 +69,7 @@ extern ULONG CcPinReadNoWait;
 extern ULONG CcPinMappedDataCount;
 extern ULONG CcDataPages;
 extern ULONG CcDataFlushes;
+extern ULONG CcReadAheadIos;
 
 typedef struct _PF_SCENARIO_ID
 {
@@ -429,6 +430,11 @@ CcRosInitializeFileCache(
 NTSTATUS
 CcRosReleaseFileCache(
     PFILE_OBJECT FileObject
+);
+
+VOID
+CcRosReleaseCacheMapPin(
+    _In_ PROS_SHARED_CACHE_MAP SharedCacheMap
 );
 
 VOID
