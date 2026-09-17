@@ -180,7 +180,6 @@ void CompleteSwitch(BOOL doSwitch)
       }
    }
 
-   windowCount = 0;
 }
 
 BOOL CALLBACK EnumerateCallback(HWND window, LPARAM lParam)
@@ -660,7 +659,12 @@ LRESULT WINAPI DoAppSwitch( WPARAM wParam, LPARAM lParam )
       EnumWindows(EnumWindowsProc, 0);
 
       if (windowCount < 2)
+      {
+          DestroyAppWindows();
+          windowCount = 0;
+          Esc = FALSE;
           return 0;
+      }
 
       RotateTasks(GetAsyncKeyState(VK_SHIFT) < 0);
 
@@ -668,6 +672,8 @@ LRESULT WINAPI DoAppSwitch( WPARAM wParam, LPARAM lParam )
 
       if (hwndActive == NULL)
       {
+          DestroyAppWindows();
+          windowCount = 0;
           Esc = FALSE;
           return 0;
       }
@@ -790,7 +796,7 @@ LRESULT WINAPI DoAppSwitch( WPARAM wParam, LPARAM lParam )
 Exit:
    ReleaseCapture();
    if (switchdialog) DestroyWindow(switchdialog);
-   if (Esc) DestroyAppWindows();
+   DestroyAppWindows();
    switchdialog = NULL;
    selectedWindow = 0;
    windowCount = 0;
