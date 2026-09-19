@@ -39,37 +39,6 @@ DIB_16BPP_HLine(SURFOBJ *SurfObj, LONG x1, LONG x2, LONG y, ULONG c)
 {
   PDWORD addr = (PDWORD)((PWORD)((PBYTE)SurfObj->pvScan0 + y * SurfObj->lDelta) + x1);
 
-#if defined(_M_IX86) && !defined(_MSC_VER)
-  /* This is about 10% faster than the generic C code below */
-  LONG Count = x2 - x1;
-
-  if (x1 >= x2)
-    return;
-
-  __asm__ __volatile__ (
-    "  cld\n"
-    "  mov  %0, %%eax\n"
-    "  shl  $16, %%eax\n"
-    "  andl $0xffff, %0\n"  /* If the pixel value is "abcd", put "abcdabcd" in %eax */
-    "  or   %0, %%eax\n"
-    "  mov  %2, %%edi\n"
-    "  test $0x03, %%edi\n" /* Align to fullword boundary */
-    "  jz   0f\n"
-    "  stosw\n"
-    "  dec  %1\n"
-    "  jz   1f\n"
-    "0:\n"
-    "  mov  %1,%%ecx\n"     /* Setup count of fullwords to fill */
-    "  shr  $1,%%ecx\n"
-    "  rep stosl\n"         /* The actual fill */
-    "  test $0x01, %1\n"    /* One left to do at the right side? */
-    "  jz   1f\n"
-    "  stosw\n"
-    "1:\n"
-    : /* no output */
-  : "r"(c), "r"(Count), "m"(addr)
-    : "%eax", "%ecx", "%edi");
-#else /* _M_IX86 */
   LONG cx = x1;
   DWORD cc;
 
@@ -92,7 +61,6 @@ DIB_16BPP_HLine(SURFOBJ *SurfObj, LONG x1, LONG x2, LONG y, ULONG c)
   {
     *((PWORD) addr) = (WORD)c;
   }
-#endif /* _M_IX86 */
 }
 
 
