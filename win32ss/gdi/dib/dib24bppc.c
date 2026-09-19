@@ -13,71 +13,85 @@
 #include <debug.h>
 
 VOID
-DIB_24BPP_HLine(SURFOBJ *SurfObj, LONG x1, LONG x2, LONG y, ULONG c)
+DIB_24BPP_HLine(
+    SURFOBJ* SurfObj,
+    LONG x1,
+    LONG x2,
+    LONG y,
+    ULONG color
+    )
 {
-  PBYTE addr = (PBYTE)SurfObj->pvScan0 + y * SurfObj->lDelta + (x1 << 1) + x1;
-  ULONG Count = x2 - x1;
+    PBYTE dst;
+    ULONG pixelCount;
+    ULONG blockCount;
+    ULONG fill0;
+    ULONG fill1;
+    ULONG fill2;
 
-  if (x1 >= x2)
-    return;
+    if (x1 >= x2)
+        return;
 
-  if (Count < 8)
-  {
-    /* For small fills, don't bother doing anything fancy */
-    while (Count--)
+    dst = (PBYTE)SurfObj->pvScan0
+        + (y * SurfObj->lDelta)
+        + (x1 * 3);
+
+    pixelCount = (ULONG)(x2 - x1);
+    color &= 0x00FFFFFF;
+
+    /*
+     * Write one 24-bit pixel in little-endian byte order.
+     */
+#define WRITE_PIXEL()            \
+    do                           \
+    {                            \
+        dst[0] = (BYTE)color;    \
+        dst[1] = (BYTE)(color >> 8);  \
+        dst[2] = (BYTE)(color >> 16); \
+        dst += 3;                \
+    } while (0)
+
+    if (pixelCount < 8)
     {
-      *(PUSHORT)(addr) = c;
-      addr += 2;
-      *(addr) = c >> 16;
-      addr += 1;
-    }
-  }
-  else
-  {
-    ULONG Fill[3];
-    ULONG MultiCount;
+        while (pixelCount-- != 0)
+            WRITE_PIXEL();
 
-    /* Align to 4-byte address */
-    while (0 != ((ULONG_PTR) addr & 0x3))
-    {
-      *(PUSHORT)(addr) = c;
-      addr += 2;
-      *(addr) = c >> 16;
-      addr += 1;
-      Count--;
+        return;
     }
-    /* If the color we need to fill with is 0ABC, then the final mem pattern
-    * (note little-endianness) would be:
-    *
-    * |C.B.A|C.B.A|C.B.A|C.B.A|   <- pixel borders
-    * |C.B.A.C|B.A.C.B|A.C.B.A|   <- ULONG borders
-    *
-    * So, taking endianness into account again, we need to fill with these
-    * ULONGs: CABC BCAB ABCA */
 
-    c = c & 0xffffff;                /* 0ABC */
-    Fill[0] = c | (c << 24);         /* CABC */
-    Fill[1] = (c >> 8) | (c << 16);  /* BCAB */
-    Fill[2] = (c << 8) | (c >> 16);  /* ABCA */
-    MultiCount = Count / 4;
-    do
+    /*
+     * Align the destination for 32-bit stores.
+     * Advancing by three bytes eventually reaches a 4-byte boundary.
+     */
+    while (((ULONG_PTR)dst & 3) != 0)
     {
-      *(PULONG)addr = Fill[0];
-      addr += 4;
-      *(PULONG)addr = Fill[1];
-      addr += 4;
-      *(PULONG)addr = Fill[2];
-      addr += 4;
+        WRITE_PIXEL();
+        --pixelCount;
     }
-    while (0 != --MultiCount);
 
-    Count = Count & 0x03;
-    while (0 != Count--)
+    /*
+     * Four 24-bit pixels occupy twelve bytes:
+     *
+     *   pixel layout:  ABC ABC ABC ABC
+     *   DWORD layout: ABCA BCAB CABC
+     *
+     * The numeric DWORD values below account for little-endian storage.
+     */
+    fill0 = color | (color << 24);
+    fill1 = (color >> 8) | (color << 16);
+    fill2 = (color << 8) | (color >> 16);
+
+    blockCount = pixelCount / 4;
+    while (blockCount-- != 0)
     {
-      *(PUSHORT)(addr) = c;
-      addr += 2;
-      *(addr) = c >> 16;
-      addr += 1;
+        ((PULONG)dst)[0] = fill0;
+        ((PULONG)dst)[1] = fill1;
+        ((PULONG)dst)[2] = fill2;
+        dst += 12;
     }
-  }
+
+    pixelCount &= 3;
+    while (pixelCount-- != 0)
+        WRITE_PIXEL();
+
+#undef WRITE_PIXEL
 }
