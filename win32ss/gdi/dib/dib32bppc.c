@@ -13,32 +13,44 @@
 #include <debug.h>
 
 VOID
-DIB_32BPP_HLine(SURFOBJ *SurfObj, LONG x1, LONG x2, LONG y, ULONG c)
+DIB_32BPP_HLine(
+    SURFOBJ* SurfObj,
+    LONG x1,
+    LONG x2,
+    LONG y,
+    ULONG c
+    )
 {
-  PBYTE byteaddr = (PBYTE)((ULONG_PTR)SurfObj->pvScan0 + y * SurfObj->lDelta);
-  PDWORD addr = (PDWORD)byteaddr + x1;
-  LONG cx = x1;
+    PBYTE byteaddr = (PBYTE)((ULONG_PTR)SurfObj->pvScan0 + y * SurfObj->lDelta);
+    PDWORD addr = (PDWORD)byteaddr + x1;
+    LONG cx = x1;
 
-  while(cx < x2)
-  {
-    *addr = (DWORD)c;
-    ++addr;
-    ++cx;
-  }
+    while(cx < x2)
+    {
+        *addr = (DWORD)c;
+        ++addr;
+        ++cx;
+    }
+
+    return;
 }
 
 BOOLEAN
-DIB_32BPP_ColorFill(SURFOBJ* DestSurface, RECTL* DestRect, ULONG color)
+DIB_32BPP_ColorFill(
+    SURFOBJ* DestSurface,
+    RECTL* DestRect,
+    ULONG color
+    )
 {
-  ULONG DestY;
+    ULONG DestY;
 
-  /* Make WellOrdered by making top < bottom and left < right */
-  RECTL_vMakeWellOrdered(DestRect);
+    /* Make WellOrdered by making top < bottom and left < right */
+    RECTL_vMakeWellOrdered(DestRect);
 
-  for (DestY = DestRect->top; DestY< DestRect->bottom; DestY++)
-  {
-    DIB_32BPP_HLine (DestSurface, DestRect->left, DestRect->right, DestY, color);
-  }
+    for (DestY = DestRect->top; DestY< DestRect->bottom; DestY++)
+    {
+        DIB_32BPP_HLine (DestSurface, DestRect->left, DestRect->right, DestY, color);
+    }
 
-  return TRUE;
+    return TRUE;
 }
