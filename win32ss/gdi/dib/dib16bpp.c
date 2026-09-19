@@ -618,45 +618,10 @@ DIB_16BPP_ColorFill(SURFOBJ* DestSurface, RECTL* DestRect, ULONG color)
   /* Make WellOrdered with top < bottom and left < right */
   RECTL_vMakeWellOrdered(DestRect);
 
-#if defined(_M_IX86) && !defined(_MSC_VER)
-  /* This is about 10% faster than the generic C code below */
-  ULONG delta = DestSurface->lDelta;
-  ULONG width = (DestRect->right - DestRect->left) ;
-  PULONG pos =  (PULONG) ((PBYTE)DestSurface->pvScan0 + DestRect->top * delta + (DestRect->left<<1));
-  color = (color&0xffff);  /* If the color value is "abcd", put "abcdabcd" into color */
-  color += (color<<16);
-
-  for (DestY = DestRect->top; DestY< DestRect->bottom; DestY++)
-  {
-    __asm__ __volatile__ (
-      "cld\n\t"
-      "mov  %1,%%ebx\n\t"
-      "mov  %2,%%edi\n\t"
-      "test $0x03, %%edi\n\t"   /* Align to fullword boundary */
-      "jz   1f\n\t"
-      "stosw\n\t"
-      "dec  %%ebx\n\t"
-      "jz   2f\n"
-      "1:\n\t"
-      "mov  %%ebx,%%ecx\n\t"    /* Setup count of fullwords to fill */
-      "shr  $1,%%ecx\n\t"
-      "rep stosl\n\t"           /* The actual fill */
-      "test $0x01, %%ebx\n\t"   /* One left to do at the right side? */
-      "jz   2f\n\t"
-      "stosw\n"
-      "2:"
-      :
-      : "a" (color), "r" (width), "m" (pos)
-      : "%ecx", "%ebx", "%edi");
-    pos =(PULONG)((ULONG_PTR)pos + delta);
-  }
-#else /* _M_IX86 */
-
   for (DestY = DestRect->top; DestY< DestRect->bottom; DestY++)
   {
     DIB_16BPP_HLine (DestSurface, DestRect->left, DestRect->right, DestY, color);
   }
-#endif
   return TRUE;
 }
 
