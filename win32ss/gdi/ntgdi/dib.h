@@ -33,4 +33,16 @@ GreCreateDIBitmapFromPackedDIB(
     _In_ UINT cjPackedDIB,
     _In_ ULONG uUsage);
 
+typedef union
+{
+  ULONG ul;
+  struct
+  {
+    UCHAR red;
+    UCHAR green;
+    UCHAR blue;
+    UCHAR alpha;
+  } col;
+} NICEPIXEL32;
+
 #define DIB_PAL_BRUSHHACK 3

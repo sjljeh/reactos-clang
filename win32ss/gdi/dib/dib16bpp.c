@@ -808,18 +808,6 @@ DIB_16BPP_TransparentBlt(SURFOBJ *DestSurf, SURFOBJ *SourceSurf,
 
 typedef union
 {
-  ULONG ul;
-  struct
-  {
-    UCHAR red;
-    UCHAR green;
-    UCHAR blue;
-    UCHAR alpha;
-  } col;
-} NICEPIXEL32;
-
-typedef union
-{
   USHORT us;
   struct
   {

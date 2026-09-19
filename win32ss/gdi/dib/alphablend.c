@@ -11,18 +11,6 @@
 #define NDEBUG
 #include <debug.h>
 
-typedef union
-{
-  ULONG ul;
-  struct
-  {
-    UCHAR red;
-    UCHAR green;
-    UCHAR blue;
-    UCHAR alpha;
-  } col;
-} NICEPIXEL32;
-
 static __inline UCHAR
 Clamp8(ULONG val)
 {

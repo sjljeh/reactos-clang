@@ -705,16 +705,6 @@ DIB_24BPP_TransparentBlt(SURFOBJ *DestSurf, SURFOBJ *SourceSurf,
   return TRUE;
 }
 
-typedef union {
-   ULONG ul;
-   struct {
-      UCHAR red;
-      UCHAR green;
-      UCHAR blue;
-      UCHAR alpha;
-   } col;
-} NICEPIXEL32;
-
 static __inline UCHAR
 Clamp8(ULONG val)
 {
