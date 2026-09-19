@@ -227,10 +227,6 @@ list(APPEND ASM_SOURCE
 list(APPEND SOURCE gdi/eng/i386/floatobj.c)
 endif()
 
-list(APPEND SOURCE
-    gdi/dib/dib24bppc.c
-    gdi/dib/dib32bppc.c)
-
 if(KDBG)
     add_definitions(-DKDBG)
     list(APPEND SOURCE gdi/ntgdi/gdikdbgext.c)
