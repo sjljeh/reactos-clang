@@ -223,16 +223,13 @@ endif()
 
 if(ARCH STREQUAL "i386")
 list(APPEND ASM_SOURCE
-    gdi/dib/i386/dib24bpp_hline.s
-    gdi/dib/i386/dib32bpp_hline.s
-    gdi/dib/i386/dib32bpp_colorfill.s
     gdi/eng/i386/floatobj.S)
 list(APPEND SOURCE gdi/eng/i386/floatobj.c)
-else()
+endif()
+
 list(APPEND SOURCE
     gdi/dib/dib24bppc.c
     gdi/dib/dib32bppc.c)
-endif()
 
 if(KDBG)
     add_definitions(-DKDBG)
