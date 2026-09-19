@@ -67,38 +67,6 @@ DIB_16BPP_HLine(SURFOBJ *SurfObj, LONG x1, LONG x2, LONG y, ULONG c)
 VOID
 DIB_16BPP_VLine(SURFOBJ *SurfObj, LONG x, LONG y1, LONG y2, ULONG c)
 {
-#if defined(_M_IX86) && !defined(_MSC_VER)
-  asm volatile(
-    "   testl %2, %2"       "\n\t"
-    "   jle   2f"           "\n\t"
-    "   movl  %2, %%ecx"    "\n\t"
-    "   shrl  $2, %2"       "\n\t"
-    "   andl  $3, %%ecx"    "\n\t"
-    "   jz    1f"           "\n\t"
-    "0:"                    "\n\t"
-    "   movw  %%ax, (%0)"   "\n\t"
-    "   addl  %1, %0"       "\n\t"
-    "   decl  %%ecx"        "\n\t"
-    "   jnz   0b"           "\n\t"
-    "   testl %2, %2"       "\n\t"
-    "   jz    2f"           "\n\t"
-    "1:"                    "\n\t"
-    "   movw  %%ax, (%0)"   "\n\t"
-    "   addl  %1, %0"       "\n\t"
-    "   movw  %%ax, (%0)"   "\n\t"
-    "   addl  %1, %0"       "\n\t"
-    "   movw  %%ax, (%0)"   "\n\t"
-    "   addl  %1, %0"       "\n\t"
-    "   movw  %%ax, (%0)"   "\n\t"
-    "   addl  %1, %0"       "\n\t"
-    "   decl  %2"           "\n\t"
-    "   jnz   1b"           "\n\t"
-    "2:"                    "\n\t"
-    : /* no output */
-  : "r"((PBYTE)SurfObj->pvScan0 + (y1 * SurfObj->lDelta) + (x * sizeof (WORD))),
-    "r"(SurfObj->lDelta), "r"(y2 - y1), "a"(c)
-    : "cc", "memory", "%ecx");
-#else
   PBYTE byteaddr = (PBYTE)(ULONG_PTR)SurfObj->pvScan0 + y1 * SurfObj->lDelta;
   PWORD addr = (PWORD)byteaddr + x;
   LONG lDelta = SurfObj->lDelta;
@@ -111,7 +79,6 @@ DIB_16BPP_VLine(SURFOBJ *SurfObj, LONG x, LONG y1, LONG y2, ULONG c)
     byteaddr += lDelta;
     addr = (PWORD)byteaddr;
   }
-#endif
 }
 
 BOOLEAN
