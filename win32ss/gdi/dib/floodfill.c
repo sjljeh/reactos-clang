@@ -21,13 +21,13 @@
 */
 
 /* Floodfil helper structures and functions */
-typedef struct _floodItem
+typedef struct _FLOODITEM
 {
     ULONG x;
     ULONG y;
 } FLOODITEM;
 
-typedef struct _floodInfo
+typedef struct _FLOODINFO
 {
     ULONG floodLen;
     FLOODITEM* floodStart;
@@ -35,11 +35,10 @@ typedef struct _floodInfo
 } FLOODINFO;
 
 static
-__inline
 BOOL
 initFlood(
     FLOODINFO* info,
-    RECTL *DstRect
+    RECTL* DstRect
     )
 {
     ULONG width, height, pixelCount;
@@ -58,28 +57,19 @@ initFlood(
         return FALSE;
     }
 
-    info->floodData = ExAllocatePoolWithTag(NonPagedPool, pixelCount * sizeof(FLOODITEM), TAG_DIB);
+    info->floodData = ExAllocatePoolWithTag(
+        NonPagedPool, pixelCount * sizeof(FLOODITEM), TAG_DIB);
     if (info->floodData == NULL)
     {
         return FALSE;
     }
     info->floodStart = info->floodData + pixelCount;
-    DPRINT("Allocated flood stack from %p to %p\n", info->floodData, info->floodStart);
+    DPRINT("Allocated flood stack from %p to %p\n", 
+        info->floodData, info->floodStart);
     return TRUE;
 }
 
 static
-__inline
-VOID
-finalizeFlood(
-    FLOODINFO* info
-    )
-{
-    ExFreePoolWithTag(info->floodData, TAG_DIB);
-}
-
-static
-__inline
 VOID
 addItemFlood(
     FLOODINFO* info,
@@ -91,37 +81,30 @@ addItemFlood(
     BOOL isSurf
     )
 {
-    if (RECTL_bPointInRect(DstRect, x, y))
+    if (!RECTL_bPointInRect(DstRect, x, y))
     {
-        if (isSurf &&
-            DibFunctionsForBitmapFormat[DstSurf->iBitmapFormat].DIB_GetPixel(DstSurf, x, y) != Color)
-        {
-            return;
-        }
-        else if (isSurf == FALSE &&
-            DibFunctionsForBitmapFormat[DstSurf->iBitmapFormat].DIB_GetPixel(DstSurf, x, y) == Color)
-        {
-            return;
-        }
-        info->floodStart--;
-        info->floodStart->x = x;
-        info->floodStart->y = y;
-        info->floodLen++;
+        return;
     }
+
+    ULONG PixelValue = DibFunctionsForBitmapFormat[DstSurf->iBitmapFormat].DIB_GetPixel(DstSurf, x, y);
+
+    if (Color != PixelValue && isSurf)
+    {
+        return;
+    }
+    else if (Color == PixelValue && !isSurf)
+    {
+        return;
+    }
+    
+    info->floodStart--;
+    info->floodStart->x = x;
+    info->floodStart->y = y;
+    info->floodLen++;
 }
 
-static
-__inline
-VOID
-removeItemFlood(
-    FLOODINFO* info
-    )
-{
-    info->floodStart++;
-    info->floodLen--;
-}
-
-BOOLEAN DIB_XXBPP_FloodFillSolid(
+BOOLEAN
+DIB_XXBPP_FloodFillSolid(
     SURFOBJ *DstSurf,
     BRUSHOBJ *Brush,
     RECTL *DstRect,
@@ -157,13 +140,14 @@ BOOLEAN DIB_XXBPP_FloodFillSolid(
         {
             x = flood.floodStart->x;
             y = flood.floodStart->y;
-            removeItemFlood(&flood);
+            flood.floodStart++;
+            flood.floodLen--;
 
             DibFunctionsForBitmapFormat[DstSurf->iBitmapFormat].DIB_PutPixel(DstSurf, x, y, BrushColor);
             if (flood.floodStart - 4 < flood.floodData)
             {
                 DPRINT1("Can't finish flooding!\n");
-                finalizeFlood(&flood);
+                ExFreePoolWithTag(flood.floodData, TAG_DIB);
                 return FALSE;
             }
             addItemFlood(&flood, x, y + 1, DstSurf, DstRect, ConvColor, FALSE);
@@ -171,7 +155,8 @@ BOOLEAN DIB_XXBPP_FloodFillSolid(
             addItemFlood(&flood, x + 1, y, DstSurf, DstRect, ConvColor, FALSE);
             addItemFlood(&flood, x - 1, y, DstSurf, DstRect, ConvColor, FALSE);
         }
-        finalizeFlood(&flood);
+
+        ExFreePoolWithTag(flood.floodData, TAG_DIB);
     }
     else if (FillType == FLOODFILLSURFACE)
     {
@@ -190,13 +175,14 @@ BOOLEAN DIB_XXBPP_FloodFillSolid(
         {
             x = flood.floodStart->x;
             y = flood.floodStart->y;
-            removeItemFlood(&flood);
+            flood.floodStart++;
+            flood.floodLen--;
 
             DibFunctionsForBitmapFormat[DstSurf->iBitmapFormat].DIB_PutPixel(DstSurf, x, y, BrushColor);
             if (flood.floodStart - 4 < flood.floodData)
             {
                 DPRINT1("Can't finish flooding!\n");
-                finalizeFlood(&flood);
+                ExFreePoolWithTag(flood.floodData, TAG_DIB);
                 return FALSE;
             }
 
@@ -205,7 +191,8 @@ BOOLEAN DIB_XXBPP_FloodFillSolid(
             addItemFlood(&flood, x + 1, y, DstSurf, DstRect, ConvColor, TRUE);
             addItemFlood(&flood, x - 1, y, DstSurf, DstRect, ConvColor, TRUE);
         }
-        finalizeFlood(&flood);
+
+        ExFreePoolWithTag(flood.floodData, TAG_DIB);
     }
     else
     {
