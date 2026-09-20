@@ -77,28 +77,28 @@ DIB_XXBPP_AlphaBlend(
         DstX = DestRect->left;
         while(DstX < DestRect->right)
         {
-            SrcPixel32.ul = DIB_GetSource(Source, SrcX, SrcY, &exloSrcRGB.xlo);
-            SrcPixel32.col.red = (SrcPixel32.col.red * BlendFunc.SourceConstantAlpha) / 255;
-            SrcPixel32.col.green = (SrcPixel32.col.green * BlendFunc.SourceConstantAlpha) / 255;
-            SrcPixel32.col.blue = (SrcPixel32.col.blue * BlendFunc.SourceConstantAlpha) / 255;
+            SrcPixel32.ulValue = DIB_GetSource(Source, SrcX, SrcY, &exloSrcRGB.xlo);
+            SrcPixel32.Comp.R8 = (SrcPixel32.Comp.R8 * BlendFunc.SourceConstantAlpha) / 255;
+            SrcPixel32.Comp.G8 = (SrcPixel32.Comp.G8 * BlendFunc.SourceConstantAlpha) / 255;
+            SrcPixel32.Comp.B8 = (SrcPixel32.Comp.B8 * BlendFunc.SourceConstantAlpha) / 255;
 
             if (BlendFunc.AlphaFormat & AC_SRC_ALPHA)
             {
-                Alpha = (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255;
+                Alpha = (SrcPixel32.Comp.A8 * BlendFunc.SourceConstantAlpha) / 255;
             }
             else
             {
                 Alpha = BlendFunc.SourceConstantAlpha;
             }
 
-            DstPixel32.ul = DIB_GetSource(Dest, DstX, DstY, &exloDstRGB.xlo);
+            DstPixel32.ulValue = DIB_GetSource(Dest, DstX, DstY, &exloDstRGB.xlo);
 
-            DstPixel32.col.red = 0xFF & ((DstPixel32.col.red * (255 - Alpha)) / 255 + SrcPixel32.col.red);
-            DstPixel32.col.green = 0xFF & ((DstPixel32.col.green * (255 - Alpha)) / 255 + SrcPixel32.col.green);
-            DstPixel32.col.blue = 0xFF & ((DstPixel32.col.blue * (255 - Alpha)) / 255 + SrcPixel32.col.blue);
+            DstPixel32.Comp.R8 = 0xFF & ((DstPixel32.Comp.R8 * (255 - Alpha)) / 255 + SrcPixel32.Comp.R8);
+            DstPixel32.Comp.G8 = 0xFF & ((DstPixel32.Comp.G8 * (255 - Alpha)) / 255 + SrcPixel32.Comp.G8);
+            DstPixel32.Comp.B8 = 0xFF & ((DstPixel32.Comp.B8 * (255 - Alpha)) / 255 + SrcPixel32.Comp.B8);
 
-            DstPixel32.ul = XLATEOBJ_iXlate(&exloRGBSrc.xlo, DstPixel32.ul);
-            pfnDibPutPixel(Dest, DstX, DstY, XLATEOBJ_iXlate(ColorTranslation, DstPixel32.ul));
+            DstPixel32.ulValue = XLATEOBJ_iXlate(&exloRGBSrc.xlo, DstPixel32.ulValue);
+            pfnDibPutPixel(Dest, DstX, DstY, XLATEOBJ_iXlate(ColorTranslation, DstPixel32.ulValue));
 
             DstX++;
             SrcX = SourceRect->left + ((DstX - DestRect->left) * (SourceRect->right - SourceRect->left))

@@ -804,14 +804,14 @@ DIB_16BPP_AlphaBlend(
             DstX = DestRect->left;
             while(DstX < DestRect->right)
             {
-                SrcPixel32.ul = DIB_GetSource(Source, SrcX, SrcY, &exloSrcRGB.xlo);
-                SrcPixel32.col.red = (SrcPixel32.col.red * BlendFunc.SourceConstantAlpha) / 255;
-                SrcPixel32.col.green = (SrcPixel32.col.green * BlendFunc.SourceConstantAlpha) / 255;
-                SrcPixel32.col.blue = (SrcPixel32.col.blue * BlendFunc.SourceConstantAlpha) / 255;
+                SrcPixel32.ulValue = DIB_GetSource(Source, SrcX, SrcY, &exloSrcRGB.xlo);
+                SrcPixel32.Comp.R8 = (SrcPixel32.Comp.R8 * BlendFunc.SourceConstantAlpha) / 255;
+                SrcPixel32.Comp.G8 = (SrcPixel32.Comp.G8 * BlendFunc.SourceConstantAlpha) / 255;
+                SrcPixel32.Comp.B8 = (SrcPixel32.Comp.B8 * BlendFunc.SourceConstantAlpha) / 255;
 
                 if (BlendFunc.AlphaFormat & AC_SRC_ALPHA)
                 {
-                    Alpha = (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255;
+                    Alpha = (SrcPixel32.Comp.A8 * BlendFunc.SourceConstantAlpha) / 255;
                 }
                 else
                 {
@@ -820,18 +820,18 @@ DIB_16BPP_AlphaBlend(
 
                 Alpha >>= 3;
 
-                DstPixel16.us = DIB_16BPP_GetPixel(Dest, DstX, DstY) & 0xFFFF;
+                DstPixel16.usValue = DIB_16BPP_GetPixel(Dest, DstX, DstY) & 0xFFFF;
                 /* Perform bit loss */
-                SrcPixel32.col.red >>= 3;
-                SrcPixel32.col.green >>= 3;
-                SrcPixel32.col.blue >>= 3;
+                SrcPixel32.Comp.R8 >>= 3;
+                SrcPixel32.Comp.G8 >>= 3;
+                SrcPixel32.Comp.B8 >>= 3;
 
                 /* Do the blend in the right bit depth */
-                DstPixel16.col.red = 0x1f & ((DstPixel16.col.red * (31 - Alpha)) / 31 + SrcPixel32.col.red);
-                DstPixel16.col.green = 0x1f & ((DstPixel16.col.green * (31 - Alpha)) / 31 + SrcPixel32.col.green);
-                DstPixel16.col.blue = 0x1f & ((DstPixel16.col.blue * (31 - Alpha)) / 31 + SrcPixel32.col.blue);
+                DstPixel16.Comp.R5 = 0x1f & ((DstPixel16.Comp.R5 * (31 - Alpha)) / 31 + SrcPixel32.Comp.R8);
+                DstPixel16.Comp.G5 = 0x1f & ((DstPixel16.Comp.G5 * (31 - Alpha)) / 31 + SrcPixel32.Comp.G8);
+                DstPixel16.Comp.B5 = 0x1f & ((DstPixel16.Comp.B5 * (31 - Alpha)) / 31 + SrcPixel32.Comp.B8);
 
-                DIB_16BPP_PutPixel(Dest, DstX, DstY, DstPixel16.us);
+                DIB_16BPP_PutPixel(Dest, DstX, DstY, DstPixel16.usValue);
 
                 DstX++;
                 SrcX = SourceRect->left + ((DstX - DestRect->left) * (SourceRect->right - SourceRect->left))
@@ -855,14 +855,14 @@ DIB_16BPP_AlphaBlend(
             DstX = DestRect->left;
             while(DstX < DestRect->right)
             {
-                SrcPixel32.ul = DIB_GetSource(Source, SrcX, SrcY, &exloSrcRGB.xlo);
-                SrcPixel32.col.red = (SrcPixel32.col.red * BlendFunc.SourceConstantAlpha) / 255;
-                SrcPixel32.col.green = (SrcPixel32.col.green * BlendFunc.SourceConstantAlpha) / 255;
-                SrcPixel32.col.blue = (SrcPixel32.col.blue * BlendFunc.SourceConstantAlpha) / 255;
+                SrcPixel32.ulValue = DIB_GetSource(Source, SrcX, SrcY, &exloSrcRGB.xlo);
+                SrcPixel32.Comp.R8 = (SrcPixel32.Comp.R8 * BlendFunc.SourceConstantAlpha) / 255;
+                SrcPixel32.Comp.G8 = (SrcPixel32.Comp.G8 * BlendFunc.SourceConstantAlpha) / 255;
+                SrcPixel32.Comp.B8 = (SrcPixel32.Comp.B8 * BlendFunc.SourceConstantAlpha) / 255;
                 
                 if (BlendFunc.AlphaFormat & AC_SRC_ALPHA)
                 {
-                    Alpha = (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255;
+                    Alpha = (SrcPixel32.Comp.A8 * BlendFunc.SourceConstantAlpha) / 255;
                 }
                 else
                 {
@@ -872,18 +872,18 @@ DIB_16BPP_AlphaBlend(
                 Alpha6 = Alpha >> 2;
                 Alpha5 = Alpha >> 3;
 
-                DstPixel16.us = DIB_16BPP_GetPixel(Dest, DstX, DstY) & 0xFFFF;
+                DstPixel16.usValue = DIB_16BPP_GetPixel(Dest, DstX, DstY) & 0xFFFF;
                 /* Perform bit loss */
-                SrcPixel32.col.red >>= 3;
-                SrcPixel32.col.green >>= 2;
-                SrcPixel32.col.blue >>= 3;
+                SrcPixel32.Comp.R8 >>= 3;
+                SrcPixel32.Comp.G8 >>= 2;
+                SrcPixel32.Comp.B8 >>= 3;
 
                 /* Do the blend in the right bit depth */
-                DstPixel16.col.red = 0x1f & ((DstPixel16.col.red * (31 - Alpha5)) / 31 + SrcPixel32.col.red);
-                DstPixel16.col.green = 0x3f & ((DstPixel16.col.green * (63 - Alpha6)) / 63 + SrcPixel32.col.green);
-                DstPixel16.col.blue = 0x1f & ((DstPixel16.col.blue * (31 - Alpha5)) / 31 + SrcPixel32.col.blue);
+                DstPixel16.Comp.R5 = 0x1f & ((DstPixel16.Comp.R5 * (31 - Alpha5)) / 31 + SrcPixel32.Comp.R8);
+                DstPixel16.Comp.G6 = 0x3f & ((DstPixel16.Comp.G6 * (63 - Alpha6)) / 63 + SrcPixel32.Comp.G8);
+                DstPixel16.Comp.B5 = 0x1f & ((DstPixel16.Comp.B5 * (31 - Alpha5)) / 31 + SrcPixel32.Comp.B8);
 
-                DIB_16BPP_PutPixel(Dest, DstX, DstY, DstPixel16.us);
+                DIB_16BPP_PutPixel(Dest, DstX, DstY, DstPixel16.usValue);
 
                 DstX++;
                 SrcX = SourceRect->left + ((DstX - DestRect->left) * (SourceRect->right - SourceRect->left))

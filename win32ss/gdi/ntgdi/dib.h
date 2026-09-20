@@ -29,20 +29,20 @@ GreGetDIBitsInternal(
 HBITMAP
 NTAPI
 GreCreateDIBitmapFromPackedDIB(
-    _In_reads_(cjPackedDIB )PVOID pvPackedDIB,
+    _In_reads_(cjPackedDIB) PVOID pvPackedDIB,
     _In_ UINT cjPackedDIB,
     _In_ ULONG uUsage);
 
 typedef union
 {
-  ULONG ul;
+  ULONG ulValue;
   struct
   {
-    UCHAR red;
-    UCHAR green;
-    UCHAR blue;
-    UCHAR alpha;
-  } col;
+    UCHAR R8;
+    UCHAR G8;
+    UCHAR B8;
+    UCHAR A8;
+  } Comp;
 } NICEPIXEL32;
 
 #define DIB_PAL_BRUSHHACK 3

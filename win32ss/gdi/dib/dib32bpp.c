@@ -824,23 +824,23 @@ DIB_32BPP_AlphaBlend(
         SrcX = SourceRect->left;
         while (++Cols <= DestRect->right - DestRect->left)
         {
-            SrcPixel.ul = DIB_GetSource(Source, SrcX, SrcY, ColorTranslation);
-            SrcPixel.col.red = (SrcPixel.col.red * BlendFunc.SourceConstantAlpha) / 255;
-            SrcPixel.col.green = (SrcPixel.col.green * BlendFunc.SourceConstantAlpha)  / 255;
-            SrcPixel.col.blue = (SrcPixel.col.blue * BlendFunc.SourceConstantAlpha) / 255;
-            SrcPixel.col.alpha = (32 == SrcBpp) ?
-                                (SrcPixel.col.alpha * BlendFunc.SourceConstantAlpha) / 255 :
+            SrcPixel.ulValue = DIB_GetSource(Source, SrcX, SrcY, ColorTranslation);
+            SrcPixel.Comp.R8 = (SrcPixel.Comp.R8 * BlendFunc.SourceConstantAlpha) / 255;
+            SrcPixel.Comp.G8 = (SrcPixel.Comp.G8 * BlendFunc.SourceConstantAlpha)  / 255;
+            SrcPixel.Comp.B8 = (SrcPixel.Comp.B8 * BlendFunc.SourceConstantAlpha) / 255;
+            SrcPixel.Comp.A8 = (32 == SrcBpp) ?
+                                (SrcPixel.Comp.A8 * BlendFunc.SourceConstantAlpha) / 255 :
                                 BlendFunc.SourceConstantAlpha ;
 
             Alpha = ((BlendFunc.AlphaFormat & AC_SRC_ALPHA) != 0) ?
-                SrcPixel.col.alpha : BlendFunc.SourceConstantAlpha ;
+                SrcPixel.Comp.A8 : BlendFunc.SourceConstantAlpha ;
 
-            DstPixel.ul = *Dst;
-            DstPixel.col.red = 0xff & ((DstPixel.col.red * (255 - Alpha)) / 255 + SrcPixel.col.red) ;
-            DstPixel.col.green = 0xff & ((DstPixel.col.green * (255 - Alpha)) / 255 + SrcPixel.col.green) ;
-            DstPixel.col.blue = 0xff & ((DstPixel.col.blue * (255 - Alpha)) / 255 + SrcPixel.col.blue) ;
-            DstPixel.col.alpha = 0xff & ((DstPixel.col.alpha * (255 - Alpha)) / 255 + SrcPixel.col.alpha) ;
-            *Dst++ = DstPixel.ul;
+            DstPixel.ulValue = *Dst;
+            DstPixel.Comp.R8 = 0xff & ((DstPixel.Comp.R8 * (255 - Alpha)) / 255 + SrcPixel.Comp.R8) ;
+            DstPixel.Comp.G8 = 0xff & ((DstPixel.Comp.G8 * (255 - Alpha)) / 255 + SrcPixel.Comp.G8) ;
+            DstPixel.Comp.B8 = 0xff & ((DstPixel.Comp.B8 * (255 - Alpha)) / 255 + SrcPixel.Comp.B8) ;
+            DstPixel.Comp.A8 = 0xff & ((DstPixel.Comp.A8 * (255 - Alpha)) / 255 + SrcPixel.Comp.A8) ;
+            *Dst++ = DstPixel.ulValue;
             SrcX = SourceRect->left + (Cols * (SourceRect->right - SourceRect->left))/(DestRect->right - DestRect->left);
         }
         Dst = (PULONG)((ULONG_PTR)Dest->pvScan0 + ((DestRect->top + Rows) * Dest->lDelta) +

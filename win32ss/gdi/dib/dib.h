@@ -196,25 +196,25 @@ DIB_PixelMaskForFormat(
 
 typedef union _NICEPIXEL16_565
 {
-    USHORT us;
+    USHORT usValue;
     struct
     {
-        USHORT blue : 5;
-        USHORT green : 6;
-        USHORT red : 5;
-    } col;
+        USHORT B5 : 5;
+        USHORT G6 : 6;
+        USHORT R5 : 5;
+    } Comp;
 } NICEPIXEL16_565;
 
 typedef union _NICEPIXEL16_555
 {
-    USHORT us;
+    USHORT usValue;
     struct
     {
-        USHORT blue : 5;
-        USHORT green : 5;
-        USHORT red : 5;
-        USHORT xxxx : 1;
-    } col;
+        USHORT B5 : 5;
+        USHORT G5 : 5;
+        USHORT R5 : 5;
+        USHORT X1 : 1;
+    } Comp;
 } NICEPIXEL16_555;
 
 ULONG DIB_DoRop(ULONG Rop, ULONG Dest, ULONG Source, ULONG Pattern);
