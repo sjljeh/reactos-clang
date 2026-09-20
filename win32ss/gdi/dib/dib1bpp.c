@@ -12,9 +12,6 @@
 #define NDEBUG
 #include <debug.h>
 
-#define DEC_OR_INC(var, decTrue, amount) \
-    ((var) = (decTrue) ? ((var) - (amount)) : ((var) + (amount)))
-
 VOID
 DIB_1BPP_PutPixel(SURFOBJ *SurfObj, LONG x, LONG y, ULONG c)
 {

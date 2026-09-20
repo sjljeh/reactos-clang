@@ -12,9 +12,6 @@
 #define NDEBUG
 #include <debug.h>
 
-#define DEC_OR_INC(var, decTrue, amount) \
-    ((var) = (decTrue) ? ((var) - (amount)) : ((var) + (amount)))
-
 VOID
 DIB_4BPP_PutPixel(
     SURFOBJ* SurfObj,
@@ -24,7 +21,7 @@ DIB_4BPP_PutPixel(
     )
 {
    PBYTE addr = (PBYTE)SurfObj->pvScan0 + (x>>1) + y * SurfObj->lDelta;
-   *addr = (*addr & notmask[x & 1]) | (BYTE)(c << ((1 - (x & 1)) << 2));
+   *addr = DIB_4BPP_SetNibble(*addr, x, c);
 
    return;
 }
@@ -38,7 +35,7 @@ DIB_4BPP_GetPixel(
 {
     PBYTE addr = (PBYTE)SurfObj->pvScan0 + (x >> 1) + y * SurfObj->lDelta;
 
-    return (*addr >> ((1 - (x & 1)) << 2)) & 0x0f;
+    return DIB_4BPP_GetNibble(*addr, x);
 }
 
 VOID
@@ -55,7 +52,7 @@ DIB_4BPP_HLine(
 
     while(cx < x2)
     {
-        *addr = (*addr & notmask[x1 & 1]) | (BYTE)(c << ((1 - (x1 & 1)) << 2));
+        *addr = DIB_4BPP_SetNibble(*addr, x1, c);
         if((++x1 & 1) == 0)
         {
             ++addr;
@@ -82,7 +79,7 @@ DIB_4BPP_VLine(
 
     while (y1++ < y2)
     {
-        *addr = (*addr & notmask[x & 1]) | (BYTE)(c << ((1 - (x & 1)) << 2));
+        *addr = DIB_4BPP_SetNibble(*addr, x, c);
         addr += lDelta;
     }
 
@@ -240,8 +237,8 @@ DIB_4BPP_BitBltSrcCopy(
 
             for (i = BltInfo->DestRect.left; i < BltInfo->DestRect.right; i++)
             {
-                *DestLine = (*DestLine & notmask[f2]) |
-                    (BYTE)((XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *SourceLine_8BPP)) << ((4 * (1 - f2))));
+                *DestLine = DIB_4BPP_SetNibble(*DestLine, f2,
+                    XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *SourceLine_8BPP));
                 if (f2 == 1)
                 {
                     f2 = 0;
@@ -296,8 +293,8 @@ DIB_4BPP_BitBltSrcCopy(
             for (i = BltInfo->DestRect.left; i < BltInfo->DestRect.right; i++)
             {
                 xColor = *((PWORD) SourceBits);
-                *DestBits = (*DestBits & notmask[f2]) |
-                    (BYTE)((XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, xColor)) << ((4 * (1 - f2))));
+                *DestBits = DIB_4BPP_SetNibble(*DestBits, f2,
+                    XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, xColor));
                 if (f2 == 1)
                 {
                     f2 = 0;
@@ -350,8 +347,8 @@ DIB_4BPP_BitBltSrcCopy(
                 xColor = (*(SourceLine_24BPP + 2) << 0x10) +
                     (*(SourceLine_24BPP + 1) << 0x08) +
                     (*(SourceLine_24BPP));
-                *DestLine = (*DestLine & notmask[f2]) |
-                    (BYTE)((XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, xColor)) << ((4 * (1 - f2))));
+                *DestLine = DIB_4BPP_SetNibble(*DestLine, f2,
+                    XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, xColor));
                 if (f2 == 1)
                 {
                     f2 = 0;
@@ -400,8 +397,8 @@ DIB_4BPP_BitBltSrcCopy(
             for (i = BltInfo->DestRect.left; i < BltInfo->DestRect.right; i++)
             {
                 xColor = *((PDWORD) SourceBits);
-                *DestBits = (*DestBits & notmask[f2]) |
-                    (BYTE)((XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, xColor)) << ((4 * (1 - f2))));
+                *DestBits = DIB_4BPP_SetNibble(*DestBits, f2,
+                    XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, xColor));
                 if (f2 == 1)
                 {
                     f2 = 0;
@@ -443,25 +440,6 @@ DIB_4BPP_BitBlt(
     BOOLEAN UsesPattern;
     PULONG DestBits;
     LONG RoundedRight;
-    static const ULONG ExpandSolidColor[16] =
-    {
-        0x00000000 /* 0 */,
-        0x11111111 /* 1 */,
-        0x22222222 /* 2 */,
-        0x33333333 /* 3 */,
-        0x44444444 /* 4 */,
-        0x55555555 /* 5 */,
-        0x66666666 /* 6 */,
-        0x77777777 /* 7 */,
-        0x88888888 /* 8 */,
-        0x99999999 /* 9 */,
-        0xAAAAAAAA /* 10 */,
-        0xBBBBBBBB /* 11 */,
-        0xCCCCCCCC /* 12 */,
-        0xDDDDDDDD /* 13 */,
-        0xEEEEEEEE /* 14 */,
-        0xFFFFFFFF /* 15 */,
-    };
 
     UsesSource = ROP4_USES_SOURCE(BltInfo->Rop4);
     UsesPattern = ROP4_USES_PATTERN(BltInfo->Rop4);
@@ -481,7 +459,7 @@ DIB_4BPP_BitBlt(
         {
             if (BltInfo->Brush)
             {
-                Pattern = ExpandSolidColor[BltInfo->Brush->iSolidColor];
+                Pattern = DIB_ExpandNibbleToULONG(BltInfo->Brush->iSolidColor);
             }
         }
     }

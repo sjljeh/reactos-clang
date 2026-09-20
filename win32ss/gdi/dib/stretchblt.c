@@ -107,16 +107,7 @@ DIB_XXBPP_StretchBlt(
 
     /* FIXME: MaskOrigin? */
 
-    switch(DestSurf->iBitmapFormat)
-    {
-    case BMF_1BPP: xxBPPMask = 0x1; break;
-    case BMF_4BPP: xxBPPMask = 0xF; break;
-    case BMF_8BPP: xxBPPMask = 0xFF; break;
-    case BMF_16BPP: xxBPPMask = 0xFFFF; break;
-    case BMF_24BPP: xxBPPMask = 0xFFFFFF; break;
-    default:
-        xxBPPMask = 0xFFFFFFFF;
-    }
+    xxBPPMask = DIB_PixelMaskForFormat(DestSurf->iBitmapFormat);
     DPRINT("xxBPPMask is 0x%x.\n", xxBPPMask);
 
     if (UsesPattern)

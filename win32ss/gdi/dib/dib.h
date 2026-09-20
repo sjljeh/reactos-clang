@@ -131,6 +131,92 @@ extern unsigned char notmask[2];
 extern unsigned char altnotmask[2];
 #define MASK1BPP(x) (1<<(7-((x)&7)))
 
+/* Single copy of the directional step helper used by all dib*BPP.c files */
+#define DEC_OR_INC(var, decTrue, amount) \
+    ((var) = (decTrue) ? ((var) - (amount)) : ((var) + (amount)))
+
+/* 4bpp helpers. High nibble holds even pixels, low nibble holds odd pixels. */
+FORCEINLINE
+BYTE
+DIB_4BPP_PreserveMask(
+    _In_ LONG x)
+{
+    return (x & 1) ? 0xF0 : 0x0F;
+}
+
+FORCEINLINE
+ULONG
+DIB_4BPP_GetNibble(
+    _In_ BYTE Byte,
+    _In_ LONG x)
+{
+    return (Byte >> ((1 - (x & 1)) << 2)) & 0x0F;
+}
+
+FORCEINLINE
+BYTE
+DIB_4BPP_SetNibble(
+    _In_ BYTE Old,
+    _In_ LONG x,
+    _In_ ULONG Color)
+{
+    return (Old & DIB_4BPP_PreserveMask(x)) |
+        (BYTE)((Color & 0x0F) << ((1 - (x & 1)) << 2));
+}
+
+FORCEINLINE
+ULONG
+DIB_ExpandNibbleToULONG(
+    _In_ ULONG Color)
+{
+    return (Color & 0x0F) * 0x11111111UL;
+}
+
+FORCEINLINE
+ULONG
+DIB_PixelMaskForFormat(
+    _In_ ULONG Format)
+{
+    switch (Format)
+    {
+    case BMF_1BPP:
+        return 0x1;
+    case BMF_4BPP:
+        return 0xF;
+    case BMF_8BPP:
+        return 0xFF;
+    case BMF_16BPP:
+        return 0xFFFF;
+    case BMF_24BPP:
+        return 0xFFFFFF;
+    default:
+        return 0xFFFFFFFF;
+    }
+}
+
+typedef union _NICEPIXEL16_565
+{
+    USHORT us;
+    struct
+    {
+        USHORT blue : 5;
+        USHORT green : 6;
+        USHORT red : 5;
+    } col;
+} NICEPIXEL16_565;
+
+typedef union _NICEPIXEL16_555
+{
+    USHORT us;
+    struct
+    {
+        USHORT blue : 5;
+        USHORT green : 5;
+        USHORT red : 5;
+        USHORT xxxx : 1;
+    } col;
+} NICEPIXEL16_555;
+
 ULONG DIB_DoRop(ULONG Rop, ULONG Dest, ULONG Source, ULONG Pattern);
 
 #define DIB_GetSource(SourceSurf,sx,sy,ColorTranslation)    \

@@ -14,9 +14,6 @@
 #define NDEBUG
 #include <debug.h>
 
-#define DEC_OR_INC(var, decTrue, amount) \
-    ((var) = (decTrue) ? ((var) - (amount)) : ((var) + (amount)))
-
 VOID
 DIB_32BPP_PutPixel(
     SURFOBJ* SurfObj,
@@ -211,7 +208,7 @@ DIB_32BPP_BitBltSrcCopy(
         for (i=BltInfo->DestRect.left; i<BltInfo->DestRect.right; i++)
         {
             xColor = XLATEOBJ_iXlate(BltInfo->XlateSourceToDest,
-            (*SourceLine_4BPP & altnotmask[f1]) >> (4 * (1 - f1)));
+            DIB_4BPP_GetNibble(*SourceLine_4BPP, f1));
             DIB_32BPP_PutPixel(BltInfo->DestSurface, i, j, xColor);
             if (f1 == 1) {
             DEC_OR_INC(SourceLine_4BPP, bLeftToRight, 1);
