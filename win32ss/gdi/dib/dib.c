@@ -157,7 +157,7 @@ static const ULONG ExpandDest[16] =
         0xF0F0F0F0 /* 1111 */,
     };
 
-    Rop &= 0xFF;
+    Rop = ROP4_FGND(Rop);
     switch(Rop)
     {
         /* Optimized code for the various named rop codes. */

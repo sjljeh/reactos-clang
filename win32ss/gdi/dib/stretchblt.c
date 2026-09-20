@@ -200,7 +200,7 @@ DIB_XXBPP_StretchBlt(
                 else
                 {
                     Source = 0;
-                    CanDraw = ((ROP & 0xFF) != R3_OPINDEX_SRCCOPY);
+                    CanDraw = (ROP4_FGND(ROP) != R3_OPINDEX_SRCCOPY);
                 }
             }
 

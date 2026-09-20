@@ -23,8 +23,9 @@ DIB_24BPP_PutPixel(
     )
 {
     PBYTE addr = (PBYTE)SurfObj->pvScan0 + (y * SurfObj->lDelta) + (x << 1) + x;
-    *(PUSHORT)(addr) = c & 0xFFFF;
-    *(addr + 2) = (c >> 16) & 0xFF;
+    addr[0] = GetRValue(c);
+    addr[1] = GetGValue(c);
+    addr[2] = GetBValue(c);
 
     return;
 }
@@ -37,7 +38,7 @@ DIB_24BPP_GetPixel(
     )
 {
     PBYTE addr = (PBYTE)SurfObj->pvScan0 + y * SurfObj->lDelta + (x << 1) + x;
-    return *(PUSHORT)(addr) + (*(addr + 2) << 16);
+    return RGB(addr[0], addr[1], addr[2]);
 }
 
 VOID
@@ -56,8 +57,9 @@ DIB_24BPP_VLine(
 
     while (y1++ < y2)
     {
-        *(PUSHORT)(addr) = c & 0xFFFF;
-        *(addr + 2) = (BYTE)(c >> 16);
+        addr[0] = GetRValue(c);
+        addr[1] = GetGValue(c);
+        addr[2] = GetBValue(c);
         addr += lDelta;
     }
 
@@ -159,9 +161,9 @@ DIB_24BPP_BitBltSrcCopy(
             {
                 xColor = XLATEOBJ_iXlate(BltInfo->XlateSourceToDest,
                     DIB_4BPP_GetNibble(*SourceLine_4BPP, f1));
-                *DestLine++ = xColor & 0xff;
-                *(PWORD)DestLine = (WORD)(xColor >> 8);
-                DestLine += 2;
+                *DestLine++ = GetRValue(xColor);
+                *DestLine++ = GetGValue(xColor);
+                *DestLine++ = GetBValue(xColor);
                 if(f1 == 1)
                 {
                     DEC_OR_INC(SourceLine_4BPP, bLeftToRight, 1);
@@ -201,8 +203,9 @@ DIB_24BPP_BitBltSrcCopy(
             for (i = BltInfo->DestRect.left; i < BltInfo->DestRect.right; i++)
             {
                 xColor = XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *SourceBits);
-                *DestBits = xColor & 0xff;
-                *(PWORD)(DestBits + 1) = (WORD)(xColor >> 8);
+                DestBits[0] = GetRValue(xColor);
+                DestBits[1] = GetGValue(xColor);
+                DestBits[2] = GetBValue(xColor);
                 DEC_OR_INC(SourceBits, bLeftToRight, 1);
                 DestBits += 3;
             }
@@ -233,9 +236,9 @@ DIB_24BPP_BitBltSrcCopy(
             for (i = BltInfo->DestRect.left; i < BltInfo->DestRect.right; i++)
             {
                 xColor = XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *SourceLine_16BPP);
-                *DestLine++ = xColor & 0xff;
-                *(PWORD)DestLine = (WORD)(xColor >> 8);
-                DestLine += 2;
+                *DestLine++ = GetRValue(xColor);
+                *DestLine++ = GetGValue(xColor);
+                *DestLine++ = GetBValue(xColor);
                 DEC_OR_INC(SourceLine_16BPP, bLeftToRight, 1);
             }
             if (bTopToBottom)
@@ -446,8 +449,9 @@ DIB_24BPP_BitBltSrcCopy(
             for (i = BltInfo->DestRect.left; i < BltInfo->DestRect.right; i++)
             {
                 xColor = XLATEOBJ_iXlate(BltInfo->XlateSourceToDest, *((PDWORD) SourceBits));
-                *DestBits = xColor & 0xff;
-                *(PWORD)(DestBits + 1) = (WORD)(xColor >> 8);
+                DestBits[0] = GetRValue(xColor);
+                DestBits[1] = GetGValue(xColor);
+                DestBits[2] = GetBValue(xColor);
                 DEC_OR_INC(SourceBits, bLeftToRight, 4);
                 DestBits += 3;
             }
@@ -509,7 +513,7 @@ DIB_24BPP_BitBlt(
 
         for (DestX = BltInfo->DestRect.left; DestX < BltInfo->DestRect.right; DestX++, DestBits += 3, SourceX++)
         {
-            Dest = *((PUSHORT)DestBits) + (*(DestBits + 2) << 16);
+            Dest = RGB(DestBits[0], DestBits[1], DestBits[2]);
 
             if (UsesSource)
             {
@@ -522,8 +526,9 @@ DIB_24BPP_BitBlt(
             }
 
             Dest = DIB_DoRop(BltInfo->Rop4, Dest, Source, Pattern) & 0xFFFFFF;
-            *(PUSHORT)(DestBits) = Dest & 0xFFFF;
-            *(DestBits + 2) = (BYTE)(Dest >> 16);
+            DestBits[0] = GetRValue(Dest);
+            DestBits[1] = GetGValue(Dest);
+            DestBits[2] = GetBValue(Dest);
         }
 
         SourceY++;
@@ -602,8 +607,9 @@ DIB_24BPP_TransparentBlt(
                 if(Source != iTransColor)
                 {
                     Dest = XLATEOBJ_iXlate(ColorTranslation, Source) & 0xFFFFFF;
-                    *(PUSHORT)(DestBits) = Dest & 0xFFFF;
-                    *(DestBits + 2) = (BYTE)(Dest >> 16);
+                    DestBits[0] = GetRValue(Dest);
+                    DestBits[1] = GetGValue(Dest);
+                    DestBits[2] = GetBValue(Dest);
                 }
             }
         }
@@ -684,9 +690,9 @@ DIB_24BPP_AlphaBlend(
                 Alpha = (SrcPixel.col.alpha * BlendFunc.SourceConstantAlpha) / 255;
             }
 
-            DstPixel.col.red = 0xff & ((*Dst * (255 - Alpha)) / 255 + SrcPixel.col.red) ;
-            DstPixel.col.green = 0xff & ((*(Dst+1) * (255 - Alpha) / 255 + SrcPixel.col.green)) ;
-            DstPixel.col.blue = 0xff & ((*(Dst+2) * (255 - Alpha)) / 255 + SrcPixel.col.blue) ;
+            DstPixel.col.red = 0xff & ((Dst[0] * (255 - Alpha)) / 255 + SrcPixel.col.red) ;
+            DstPixel.col.green = 0xff & ((Dst[1] * (255 - Alpha) / 255 + SrcPixel.col.green)) ;
+            DstPixel.col.blue = 0xff & ((Dst[2] * (255 - Alpha)) / 255 + SrcPixel.col.blue) ;
             *Dst++ = DstPixel.col.red;
             *Dst++ = DstPixel.col.green;
             *Dst++ = DstPixel.col.blue;

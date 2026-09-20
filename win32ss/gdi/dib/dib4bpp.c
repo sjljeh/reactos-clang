@@ -438,7 +438,8 @@ DIB_4BPP_BitBlt(
     ULONG Dest, Source = 0, Pattern = 0;
     BOOLEAN UsesSource;
     BOOLEAN UsesPattern;
-    PULONG DestBits;
+    /* left>>1 plus a 1-byte bump is arbitrary, so ULONG accesses may be unaligned */
+    UNALIGNED ULONG *DestBits;
     LONG RoundedRight;
 
     UsesSource = ROP4_USES_SOURCE(BltInfo->Rop4);
@@ -466,7 +467,7 @@ DIB_4BPP_BitBlt(
 
     for (DestY = BltInfo->DestRect.top; DestY < BltInfo->DestRect.bottom; DestY++)
     {
-        DestBits = (PULONG)(
+        DestBits = (UNALIGNED ULONG *)(
             (PBYTE)BltInfo->DestSurface->pvScan0 +
             (BltInfo->DestRect.left >> 1) +
         DestY * BltInfo->DestSurface->lDelta);
@@ -492,7 +493,7 @@ DIB_4BPP_BitBlt(
 
             DestX++;
             SourceX++;
-            DestBits = (PULONG)((ULONG_PTR)DestBits + 1);
+            DestBits = (UNALIGNED ULONG *)((ULONG_PTR)DestBits + 1);
         }
 
         for (; DestX < RoundedRight; DestX += 8, SourceX += 8, DestBits++)

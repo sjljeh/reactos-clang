@@ -661,7 +661,9 @@ DIB_16BPP_TransparentBlt(
     )
 {
     LONG RoundedRight, X, Y, SourceX = 0, SourceY = 0, wd;
-    ULONG *DestBits, Source, Dest;
+    /* DestRect.left is arbitrary, so ULONG accesses may be unaligned */
+    UNALIGNED ULONG *DestBits;
+    ULONG Source, Dest;
 
     LONG DstHeight;
     LONG DstWidth;
@@ -674,7 +676,7 @@ DIB_16BPP_TransparentBlt(
     SrcWidth = SourceRect->right - SourceRect->left;
 
     RoundedRight = DestRect->right - ((DestRect->right - DestRect->left) & 0x1);
-    DestBits = (ULONG*)((PBYTE)DestSurf->pvScan0 +
+    DestBits = (UNALIGNED ULONG *)((PBYTE)DestSurf->pvScan0 +
         (DestRect->left << 1) +
         DestRect->top * DestSurf->lDelta);
     wd = DestSurf->lDelta - ((DestRect->right - DestRect->left) << 1);
@@ -694,7 +696,7 @@ DIB_16BPP_TransparentBlt(
                 if(Source != iTransColor)
                 {
                     Dest &= 0xFFFF0000;
-                    Dest |= (XLATEOBJ_iXlate(ColorTranslation, Source) & 0xFFFF);
+                    Dest |= LOWORD(XLATEOBJ_iXlate(ColorTranslation, Source));
                 }
             }
 
@@ -722,15 +724,15 @@ DIB_16BPP_TransparentBlt(
                 Source = DIB_GetSourceIndex(SourceSurf, SourceX, SourceY);
                 if (Source != iTransColor)
                 {
-                    *((USHORT*)DestBits) = (USHORT)XLATEOBJ_iXlate(ColorTranslation,
+                    *((UNALIGNED USHORT*)DestBits) = (USHORT)XLATEOBJ_iXlate(ColorTranslation,
                         Source);
                 }
             }
 
-            DestBits = (PULONG)((ULONG_PTR)DestBits + 2);
+            DestBits = (UNALIGNED ULONG *)((ULONG_PTR)DestBits + 2);
         }
 
-        DestBits = (ULONG*)((ULONG_PTR)DestBits + wd);
+        DestBits = (UNALIGNED ULONG *)((ULONG_PTR)DestBits + wd);
     }
 
     return TRUE;
@@ -807,9 +809,14 @@ DIB_16BPP_AlphaBlend(
                 SrcPixel32.col.green = (SrcPixel32.col.green * BlendFunc.SourceConstantAlpha) / 255;
                 SrcPixel32.col.blue = (SrcPixel32.col.blue * BlendFunc.SourceConstantAlpha) / 255;
 
-                Alpha = ((BlendFunc.AlphaFormat & AC_SRC_ALPHA) != 0) ?
-                    (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255 :
-                    BlendFunc.SourceConstantAlpha;
+                if (BlendFunc.AlphaFormat & AC_SRC_ALPHA)
+                {
+                    Alpha = (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255;
+                }
+                else
+                {
+                    Alpha = BlendFunc.SourceConstantAlpha;
+                }
 
                 Alpha >>= 3;
 
@@ -852,10 +859,15 @@ DIB_16BPP_AlphaBlend(
                 SrcPixel32.col.red = (SrcPixel32.col.red * BlendFunc.SourceConstantAlpha) / 255;
                 SrcPixel32.col.green = (SrcPixel32.col.green * BlendFunc.SourceConstantAlpha) / 255;
                 SrcPixel32.col.blue = (SrcPixel32.col.blue * BlendFunc.SourceConstantAlpha) / 255;
-
-                Alpha = ((BlendFunc.AlphaFormat & AC_SRC_ALPHA) != 0) ?
-                    (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255 :
-                    BlendFunc.SourceConstantAlpha;
+                
+                if (BlendFunc.AlphaFormat & AC_SRC_ALPHA)
+                {
+                    Alpha = (SrcPixel32.col.alpha * BlendFunc.SourceConstantAlpha) / 255;
+                }
+                else
+                {
+                    Alpha = BlendFunc.SourceConstantAlpha;
+                }
 
                 Alpha6 = Alpha >> 2;
                 Alpha5 = Alpha >> 3;

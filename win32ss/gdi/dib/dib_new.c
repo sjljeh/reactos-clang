@@ -23,7 +23,7 @@ DIB_DoRop(
     ULONG Pattern
     )
 {
-    return gapfnRop[Rop & 0xFF](Dest, Source, Pattern);
+    return gapfnRop[ROP4_FGND(Rop)](Dest, Source, Pattern);
 }
 
 DIB_FUNCTIONS DibFunctionsForBitmapFormat[] =

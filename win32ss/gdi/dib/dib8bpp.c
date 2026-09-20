@@ -577,7 +577,9 @@ DIB_8BPP_TransparentBlt(
     )
 {
     LONG RoundedRight, X, Y, SourceX = 0, SourceY = 0;
-    ULONG *DestBits, Source, Dest;
+    /* DestRect.left is arbitrary, so ULONG accesses may be unaligned */
+    UNALIGNED ULONG *DestBits;
+    ULONG Source, Dest;
 
     LONG DstHeight;
     LONG DstWidth;
@@ -590,12 +592,12 @@ DIB_8BPP_TransparentBlt(
     SrcWidth = SourceRect->right - SourceRect->left;
 
     RoundedRight = DestRect->right - ((DestRect->right - DestRect->left) & 0x3);
-    DestBits = (ULONG*)((PBYTE)DestSurf->pvScan0 + DestRect->left +
+    DestBits = (UNALIGNED ULONG *)((PBYTE)DestSurf->pvScan0 + DestRect->left +
                         (DestRect->top * DestSurf->lDelta));
 
     for (Y = DestRect->top; Y < DestRect->bottom; Y++)
     {
-        DestBits = (ULONG*)((PBYTE)DestSurf->pvScan0 + DestRect->left +
+        DestBits = (UNALIGNED ULONG *)((PBYTE)DestSurf->pvScan0 + DestRect->left +
                             (Y * DestSurf->lDelta));
         SourceY = SourceRect->top+(Y - DestRect->top) * SrcHeight / DstHeight;
         for (X = DestRect->left; X < RoundedRight; X += 4, DestBits++)
@@ -610,7 +612,7 @@ DIB_8BPP_TransparentBlt(
                 if (Source != iTransColor)
                 {
                     Dest &= 0xFFFFFF00;
-                    Dest |= (XLATEOBJ_iXlate(ColorTranslation, Source) & 0xFF);
+                    Dest |= LOBYTE(XLATEOBJ_iXlate(ColorTranslation, Source));
                 }
             }
 
@@ -664,10 +666,10 @@ DIB_8BPP_TransparentBlt(
                     Source = DIB_GetSourceIndex(SourceSurf, SourceX, SourceY);
                     if(Source != iTransColor)
                     {
-                        *((BYTE*)DestBits) = (BYTE)(XLATEOBJ_iXlate(ColorTranslation, Source) & 0xFF);
+                        *((BYTE*)DestBits) = LOBYTE(XLATEOBJ_iXlate(ColorTranslation, Source));
                     }
                 }
-                DestBits = (PULONG)((ULONG_PTR)DestBits + 1);
+                DestBits = (UNALIGNED ULONG *)((ULONG_PTR)DestBits + 1);
             }
         }
     }

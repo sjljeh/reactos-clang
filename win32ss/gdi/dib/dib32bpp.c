@@ -26,6 +26,8 @@ DIB_32BPP_PutPixel(
     PDWORD addr = (PDWORD)byteaddr + x;
 
     *addr = c;
+
+    return;
 }
 
 ULONG
@@ -60,6 +62,8 @@ DIB_32BPP_VLine(
         *addr = (DWORD)c;
         addr += lDelta;
     }
+
+    return;
 }
 
 BOOLEAN
